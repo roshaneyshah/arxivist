@@ -1,0 +1,18 @@
+{
+  "index_version": 1,
+  "total_papers": 1,
+  "papers": [
+    {
+      "paper_id": "arxiv_1512_003385",
+      "title": "Deep Residual Learning for Image Recognition",
+      "domain": "CV",
+      "sir_version": 1,
+      "sir_confidence": 0.92,
+      "has_repo": true,
+      "has_notebook": true,
+      "has_comparison": true,
+      "latest_reproducibility_score": 0.96,
+      "last_updated": "2026-05-19T10:30:00Z"
+    }
+  ]
+}
