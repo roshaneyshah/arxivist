@@ -1,0 +1,52 @@
+# Experiment configuration for RL Optimized Trade Execution
+# Nevmyvaka, Feng, Kearns — ICML 2006
+# All parameters annotated with confidence from SIR
+
+experiment:
+  stock: "AMZN"          # one of: AMZN, NVDA, QCOM
+  V: 10000               # total shares to execute (paper: 5000 or 10000)
+  H_minutes: 2           # execution horizon in minutes (paper: 2 or 8)
+  side: "sell"           # "sell" or "buy"
+  seed: 42
+
+state_space:
+  T: 8                   # time resolution: decision points per episode (paper: 4 or 8)
+  I: 8                   # inventory resolution: levels of remaining inventory (paper: 4 or 8)
+  # Market variables to include in state. Options:
+  #   bid_ask_spread, immediate_market_order_cost, bid_ask_volume_imbalance, signed_transaction_volume
+  market_variables:
+    - bid_ask_spread
+    - immediate_market_order_cost
+  n_bins_market: 3       # ASSUMED: 3 bins per market variable (low/medium/high)
+                         # Confidence 0.80 — paper explicitly states 3 levels for tx volume,
+                         # implied for others
+
+action_space:
+  L: 21                  # ASSUMED: number of discrete price offset actions
+                         # Confidence 0.60 — inferred from Figure 5/7 x-axis range (-6 to +14)
+                         # TODO: verify from paper
+  action_min: -6         # most passive (deep in own book, 6 ticks below ask)
+  action_max: 14         # most aggressive (14 ticks toward opposing book)
+
+training:
+  data_path: "data/raw/"
+  train_months: 12       # paper: 12 months for training
+  test_months: 6         # paper: 6 months for test
+  log_every_n_steps: 1000
+  save_checkpoint: true
+  checkpoint_dir: "models/"
+
+evaluation:
+  output_dir: "results/"
+  report_stocks:
+    - AMZN
+    - NVDA
+    - QCOM
+
+data:
+  signed_volume_window_seconds: 15  # paper: "volume of trades within last 15 seconds"
+  episode_overlap: false             # non-overlapping episode partitioning
+
+hardware:
+  device: "cpu"           # no GPU needed for tabular RL
+  num_workers: 4
