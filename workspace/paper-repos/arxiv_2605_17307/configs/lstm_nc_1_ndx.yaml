@@ -1,0 +1,48 @@
+# LSTM_NC_1 on NASDAQ-100 (Table 3)
+# Reward: benchmark-relative; FULLY INVESTED (no cash); flat Dirichlet policy
+seed: 42
+device: cuda
+
+model:
+  encoder_type: lstm
+  lstm_hidden: 128
+  lstm_layers: 1
+  policy_type: flat_dirichlet
+  critic_hidden: [256, 256]
+  allow_cash: false
+  feature_fusion: concat
+
+training:
+  lr_actor: 3.0e-4
+  lr_critic: 5.0e-4
+  lr_entropy: 3.0e-4
+  alpha: 0.2
+  gamma: 0.99
+  tau: 0.005
+  batch_size: 128
+  replay_capacity: 20000
+  warmup_steps: 500
+  gradient_steps: 2
+  epochs: 50
+  early_stopping_patience: 8
+
+data:
+  market: ndx
+  benchmark: QQQ
+  lookback_window: 60
+  topk: 10
+  momentum_horizon: 120
+  start_date: "2003-01-02"
+  end_date: "2026-03-13"
+  transaction_cost_bps: 2.0
+
+evaluation:
+  train_years: 5
+  val_years: 1
+  test_years: 1
+  num_folds: 16
+  adaptive_retrain_window: 5
+  max_folds_without_retraining: 3
+  reward_type: benchmark_relative
+  lambda_turnover: 0.003
+  lambda_concentration: 0.5

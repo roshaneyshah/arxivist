@@ -1,0 +1,49 @@
+{
+  "paper_id": "arxiv_2605_17307",
+  "paper_title": "Deep Reinforcement Learning Framework for Diversified Portfolio Management Across Global Equity Markets",
+  "current_stage": 6,
+  "stages_completed": [1, 2, 3, 4, 5],
+  "stage_timestamps": {
+    "1": "2026-05-24T12:00:00Z",
+    "2": "2026-05-24T12:02:00Z",
+    "3": "2026-05-24T12:05:00Z",
+    "4": "2026-05-24T12:15:00Z",
+    "5": "2026-05-24T12:20:00Z",
+    "6": null
+  },
+  "stage_confidence": {
+    "1": 0.88,
+    "2": 1.0,
+    "3": 0.85,
+    "4": 0.78,
+    "5": 0.80,
+    "6": null
+  },
+  "sir_path": "workspace/sir-registry/arxiv_2605_17307/sir.json",
+  "repo_path": "workspace/paper-repos/arxiv_2605_17307/",
+  "artifacts": {
+    "sir": "workspace/sir-registry/arxiv_2605_17307/sir.json",
+    "architecture_plan": "workspace/sir-registry/arxiv_2605_17307/architecture_plan.json",
+    "repo_initialized": true,
+    "notebook_path": "workspace/paper-repos/arxiv_2605_17307/notebooks/reproduce_arxiv_2605_17307.ipynb",
+    "comparison_report": null
+  },
+  "confidence_flags": {
+    "architecture.GlobalFeatureProjector": 0.60,
+    "architecture.CrossSectionalAttention": 0.70,
+    "ambiguities.equity_split_distribution": 0.50,
+    "ambiguities.global_feature_fusion": 0.45,
+    "ambiguities.historical_index_membership": 0.30
+  },
+  "human_review_required": true,
+  "human_review_reasons": [
+    "Historical index membership (Bloomberg) not publicly available — reproduction will use survivorship-biased current membership unless user supplies historical CSVs",
+    "Equity-vs-cash split distribution in hierarchical policy not specified — assumed Beta(α,β)",
+    "Global feature fusion mechanism (concat vs cross-attention) not specified"
+  ],
+  "loop_count": 0,
+  "retry_history": [],
+  "created_at": "2026-05-24T12:00:00Z",
+  "last_updated": "2026-05-24T12:20:00Z",
+  "pipeline_complete": false
+}

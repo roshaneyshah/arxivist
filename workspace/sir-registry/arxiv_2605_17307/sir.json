@@ -1,0 +1,616 @@
+{
+  "paper_id": "arxiv_2605_17307",
+  "sir_version": 1,
+  "provenance": {
+    "title": "Deep Reinforcement Learning Framework for Diversified Portfolio Management Across Global Equity Markets",
+    "authors": ["Kamil Kashif", "Robert Ślepaczuk"],
+    "affiliations": [
+      "Quantitative Finance Research Group, Faculty of Economic Sciences, University of Warsaw"
+    ],
+    "arxiv_id": "2605.17307",
+    "doi": "10.48550/arXiv.2605.17307",
+    "submission_date": "2026-05-17",
+    "abstract": "Deep RL framework for dynamic portfolio allocation across global equities. SAC learns continuous weights in an MDP with transaction costs, turnover penalties and diversification constraints in the reward. Five configurations (reward type, flat vs hierarchical Dirichlet, constraints, LSTM vs Transformer) evaluated via 16-fold walk-forward on NDX, NKY, SX5E (2003-2026). Competitive mainly in SX5E; no strategy beats Buy&Hold with statistical significance under HAC inference.",
+    "domain": "RL",
+    "key_claims": [
+      "SAC-based RL with hierarchical Dirichlet policy improves risk-adjusted performance vs flat policy",
+      "Cash-allowed configurations achieve lower drawdowns and higher IR2 than fully-invested ones",
+      "RL strategies outperform Buy&Hold on IR2 in Euro Stoxx 50 across all three macro regimes",
+      "Cross-market equal-weight ensemble of RL strategies (LSTM_1) achieves IR2=0.41 vs benchmark 0.34",
+      "No RL strategy achieves statistically significant excess returns vs Buy&Hold under HAC-robust inference across all markets"
+    ],
+    "parsed_at": "2026-05-24T12:00:00Z",
+    "arxivist_version": "0.1.0"
+  },
+  "architecture": {
+    "primary_variant": "LSTM_2",
+    "modules": [
+      {
+        "name": "FeatureExtractor",
+        "operation_type": "feature_engineering",
+        "input_shape": "(N_t, T_raw, F_raw)",
+        "output_shape": "(N_t, T=60, F_asset)",
+        "parameters": {
+          "lookback_window": 60,
+          "momentum_horizons": [1, 5, 20, 60],
+          "volatility_horizons": [5, 20],
+          "beta_window": 60,
+          "topk_momentum_horizon": 120
+        },
+        "paper_section": "5.1",
+        "confidence": 0.95,
+        "notes": "Builds per-asset features (momentum, volatility, RSI, MACD, %B, distance-from-20d-high, mean-reversion, rolling beta vs market proxy, 20d log return) and global features (VIX level, VIX 5d change, cross-sectional mean return and 5d vol, breadth, market-proxy normalized 5d/20d returns)."
+      },
+      {
+        "name": "TopKSelector",
+        "operation_type": "asset_selection",
+        "input_shape": "(N_total, F)",
+        "output_shape": "(k, F)",
+        "parameters": {"k_options": [10, 20, 30], "momentum_horizon_days": 120},
+        "paper_section": "5.1.6",
+        "confidence": 0.98,
+        "notes": "Exogenous pre-selection: top-k assets by 120-day cross-sectional momentum among tradable constituents. k ∈ {10, 20, 30} per configuration."
+      },
+      {
+        "name": "LSTMEncoder",
+        "operation_type": "sequence_encoder",
+        "input_shape": "(B, k, T=60, F_asset)",
+        "output_shape": "(B, k, H)",
+        "parameters": {"hidden_size_options": [64, 128], "num_layers": 1},
+        "paper_section": "5.4.2, Table 5",
+        "confidence": 0.92,
+        "notes": "LSTM applied to each asset's historical feature sequence; hidden size 64 or 128 selected per fold via validation Sharpe."
+      },
+      {
+        "name": "TransformerEncoder",
+        "operation_type": "sequence_encoder",
+        "input_shape": "(B, k, T=60, F_asset)",
+        "output_shape": "(B, k, H=128)",
+        "parameters": {"hidden_size": 128, "num_layers": 2, "num_heads": 4},
+        "paper_section": "5.4.2, Table 5",
+        "confidence": 0.85,
+        "notes": "Two-layer self-attention encoder, hidden 128. Number of heads not explicitly stated — assumed 4 (standard for hidden=128)."
+      },
+      {
+        "name": "CrossSectionalAttention",
+        "operation_type": "attention",
+        "input_shape": "(B, k, H)",
+        "output_shape": "(B, k, H) and (B, H_global)",
+        "parameters": {},
+        "paper_section": "5.4.2",
+        "confidence": 0.70,
+        "notes": "Attention across assets to capture cross-sectional relationships. Specific attention variant (additive vs scaled dot-product) not explicit — assumed scaled dot-product."
+      },
+      {
+        "name": "GlobalFeatureProjector",
+        "operation_type": "mlp",
+        "input_shape": "(B, F_global)",
+        "output_shape": "(B, H_global)",
+        "parameters": {"hidden_size": 64},
+        "paper_section": "5.4.2",
+        "confidence": 0.60,
+        "notes": "Projects scalar global market features into a vector to concatenate with encoded asset representations. Exact dims not specified."
+      },
+      {
+        "name": "FlatDirichletPolicy",
+        "operation_type": "policy_head",
+        "input_shape": "(B, H_state)",
+        "output_shape": "(B, k+1)",
+        "parameters": {"alpha_softplus_floor": 1.0},
+        "paper_section": "5.4.3 (flat)",
+        "confidence": 0.88,
+        "notes": "Maps encoded state to Dirichlet concentration parameters over k assets + cash; samples weight vector summing to 1."
+      },
+      {
+        "name": "HierarchicalDirichletPolicy",
+        "operation_type": "policy_head",
+        "input_shape": "(B, H_state)",
+        "output_shape": "(B, k+1)",
+        "parameters": {},
+        "paper_section": "5.4.3 (hierarchical)",
+        "confidence": 0.85,
+        "notes": "Two-stage: (1) Beta/Dirichlet over (equity, cash) split; (2) Dirichlet over k assets conditional on equity allocation. Final weights = equity_split * asset_weights, with cash slot = cash_split."
+      },
+      {
+        "name": "TwinCritic",
+        "operation_type": "q_network",
+        "input_shape": "(B, H_state + k+1)",
+        "output_shape": "(B, 1) x 2",
+        "parameters": {"hidden_layers": [256, 256]},
+        "paper_section": "5.4.4",
+        "confidence": 0.80,
+        "notes": "Two independent Q-networks taking state and action; SAC standard. Layer widths not specified — assumed [256,256] (SAC default)."
+      },
+      {
+        "name": "ReplayBuffer",
+        "operation_type": "experience_storage",
+        "input_shape": "transitions",
+        "output_shape": "batches of 128",
+        "parameters": {"capacity": 20000},
+        "paper_section": "Table 4",
+        "confidence": 0.99
+      },
+      {
+        "name": "PortfolioEnvironment",
+        "operation_type": "rl_environment",
+        "input_shape": "action (B, k+1)",
+        "output_shape": "next_state, reward, done",
+        "parameters": {
+          "transaction_cost_bps": 2.0,
+          "turnover_penalty": 0.003,
+          "concentration_penalty_options": [0.0, 0.1, 0.5],
+          "lookback_window": 60
+        },
+        "paper_section": "5.2, 5.3, Table 6",
+        "confidence": 0.93,
+        "notes": "Custom Gymnasium-style environment; computes net portfolio return after transaction costs, scaled reward with turnover and HHI penalties, advances one trading day."
+      },
+      {
+        "name": "WalkForwardOrchestrator",
+        "operation_type": "training_loop",
+        "input_shape": "full price dataset",
+        "output_shape": "out-of-sample equity curves per fold",
+        "parameters": {
+          "train_years": 5,
+          "val_years": 1,
+          "test_years": 1,
+          "num_folds": 16,
+          "max_folds_without_retraining": 3,
+          "retraining_window_size": 5
+        },
+        "paper_section": "5.6.1, 5.6.2",
+        "confidence": 0.92,
+        "notes": "Non-anchored rolling WFO with adaptive retraining triggered when validation Sharpe < 0 or < median(last 5) - 0.5*std, or after 3 folds without retraining."
+      }
+    ],
+    "connections": [
+      {"from": "FeatureExtractor", "to": "TopKSelector", "tensor_name": "features_full"},
+      {"from": "TopKSelector", "to": "LSTMEncoder", "tensor_name": "selected_features"},
+      {"from": "TopKSelector", "to": "TransformerEncoder", "tensor_name": "selected_features"},
+      {"from": "LSTMEncoder", "to": "CrossSectionalAttention", "tensor_name": "asset_embeddings"},
+      {"from": "TransformerEncoder", "to": "CrossSectionalAttention", "tensor_name": "asset_embeddings"},
+      {"from": "FeatureExtractor", "to": "GlobalFeatureProjector", "tensor_name": "global_features"},
+      {"from": "CrossSectionalAttention", "to": "FlatDirichletPolicy", "tensor_name": "state_repr"},
+      {"from": "GlobalFeatureProjector", "to": "FlatDirichletPolicy", "tensor_name": "state_repr"},
+      {"from": "CrossSectionalAttention", "to": "HierarchicalDirichletPolicy", "tensor_name": "state_repr"},
+      {"from": "GlobalFeatureProjector", "to": "HierarchicalDirichletPolicy", "tensor_name": "state_repr"},
+      {"from": "FlatDirichletPolicy", "to": "PortfolioEnvironment", "tensor_name": "action_weights"},
+      {"from": "HierarchicalDirichletPolicy", "to": "PortfolioEnvironment", "tensor_name": "action_weights"},
+      {"from": "PortfolioEnvironment", "to": "ReplayBuffer", "tensor_name": "transition"},
+      {"from": "ReplayBuffer", "to": "TwinCritic", "tensor_name": "batch"},
+      {"from": "ReplayBuffer", "to": "FlatDirichletPolicy", "tensor_name": "batch"},
+      {"from": "TwinCritic", "to": "FlatDirichletPolicy", "tensor_name": "q_values"},
+      {"from": "WalkForwardOrchestrator", "to": "PortfolioEnvironment", "tensor_name": "fold_data"}
+    ],
+    "variants": [
+      {
+        "name": "LSTM_1",
+        "differences": {
+          "encoder": "LSTM",
+          "policy": "flat_dirichlet",
+          "reward": "log_return_absolute",
+          "constraints": "cash_allowed_flexible_exposure",
+          "topk": [20, 30]
+        }
+      },
+      {
+        "name": "LSTM_2",
+        "differences": {
+          "encoder": "LSTM",
+          "policy": "hierarchical_dirichlet",
+          "reward": "log_return_absolute",
+          "constraints": "cash_allowed_flexible_exposure",
+          "topk": [20, 30]
+        }
+      },
+      {
+        "name": "LSTM_NC_1",
+        "differences": {
+          "encoder": "LSTM",
+          "policy": "flat_dirichlet",
+          "reward": "benchmark_relative",
+          "constraints": "fully_invested_no_cash",
+          "topk": [10, 20]
+        }
+      },
+      {
+        "name": "LSTM_NC_2",
+        "differences": {
+          "encoder": "LSTM",
+          "policy": "flat_dirichlet",
+          "reward": "benchmark_relative",
+          "constraints": "fully_invested_no_cash",
+          "topk": [20]
+        }
+      },
+      {
+        "name": "TRANSFORMERS",
+        "differences": {
+          "encoder": "Transformer",
+          "policy": "flat_dirichlet",
+          "reward": "log_return_absolute",
+          "constraints": "cash_allowed_flexible_exposure",
+          "topk": [20, 30]
+        }
+      }
+    ]
+  },
+  "mathematical_spec": [
+    {
+      "name": "log_return_feature",
+      "latex": "r_{i,t}^{(X)} = \\log\\!\\left(\\frac{P_{i,t}}{P_{i,t-X}}\\right)",
+      "role": "other",
+      "used_in": "both",
+      "hyperparameters": ["X"],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 9, §5.1.1",
+      "confidence": 1.0
+    },
+    {
+      "name": "rolling_volatility_feature",
+      "latex": "\\sigma_{i,t}^{(X)} = \\sqrt{\\frac{1}{X}\\sum_{j=1}^{X}\\!\\left(r_{i,t-j}-\\bar r_{i,t}\\right)^2}",
+      "role": "other",
+      "used_in": "both",
+      "hyperparameters": ["X"],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 10, §5.1.2",
+      "confidence": 0.95
+    },
+    {
+      "name": "topk_momentum",
+      "latex": "m_{i,t}^{(120)} = \\frac{P_{i,t}}{P_{i,t-120}} - 1",
+      "role": "other",
+      "used_in": "both",
+      "hyperparameters": [],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 8 / Eq. 11, §5.1.6",
+      "confidence": 1.0
+    },
+    {
+      "name": "portfolio_return",
+      "latex": "R_{p,t+1} = \\sum_{i=1}^{N_t} w_{i,t}\\,R_{i,t+1}",
+      "role": "other",
+      "used_in": "both",
+      "hyperparameters": [],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 7, §4.5",
+      "confidence": 1.0
+    },
+    {
+      "name": "budget_constraint",
+      "latex": "\\sum_{i=1}^{N_t} w_{i,t} + w_t^{c} = 1, \\quad w_{i,t}\\ge 0",
+      "role": "other",
+      "used_in": "both",
+      "hyperparameters": [],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 13, §5.2",
+      "confidence": 1.0
+    },
+    {
+      "name": "log_reward_component",
+      "latex": "\\tilde r_{p,t} = \\log\\!\\left(1 + r_{p,t}^{net}\\right)",
+      "role": "objective",
+      "used_in": "training",
+      "hyperparameters": [],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 14, §5.3",
+      "confidence": 1.0
+    },
+    {
+      "name": "herfindahl_index",
+      "latex": "\\mathrm{HHI}_t = \\sum_{i=1}^{N_t} w_{i,t}^{2}, \\quad \\mathrm{HHI}_t^{\\min}=1/N_t",
+      "role": "other",
+      "used_in": "training",
+      "hyperparameters": [],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 15, §5.3",
+      "confidence": 1.0
+    },
+    {
+      "name": "reward_absolute",
+      "latex": "r_t = 1000\\,\\tilde r_{p,t} - \\lambda_{TO}\\,TO_t\\cdot 100 - \\lambda_{conc}(\\mathrm{HHI}_t - \\mathrm{HHI}_t^{\\min})\\cdot 100",
+      "role": "objective",
+      "used_in": "training",
+      "hyperparameters": ["lambda_TO=0.003", "lambda_conc in {0.0,0.1,0.5}"],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 16, §5.3",
+      "confidence": 1.0
+    },
+    {
+      "name": "reward_benchmark_relative",
+      "latex": "r_t = 1000\\,(\\tilde r_{p,t}-\\tilde r_{b,t}) - \\lambda_{TO}\\,TO_t\\cdot 100 - \\lambda_{conc}(\\mathrm{HHI}_t-\\mathrm{HHI}_t^{\\min})\\cdot 100",
+      "role": "objective",
+      "used_in": "training",
+      "hyperparameters": ["lambda_TO", "lambda_conc"],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 17, §5.3",
+      "confidence": 1.0
+    },
+    {
+      "name": "turnover",
+      "latex": "TO_t = \\sum_{i=1}^{N_t} |w_{i,t}-w_{i,t^-}| + |w_t^{c} - w_{t^-}^{c}|",
+      "role": "other",
+      "used_in": "both",
+      "hyperparameters": [],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 30, §5.8.0.9",
+      "confidence": 1.0
+    },
+    {
+      "name": "soft_target_update",
+      "latex": "\\theta^- \\leftarrow \\tau\\,\\theta + (1-\\tau)\\,\\theta^-",
+      "role": "other",
+      "used_in": "training",
+      "hyperparameters": ["tau=0.005"],
+      "undefined_symbols": [],
+      "paper_section": "§5.4.1",
+      "confidence": 1.0
+    },
+    {
+      "name": "sac_actor_loss",
+      "latex": "J_\\pi(\\phi) = \\mathbb{E}_{s_t \\sim D}\\!\\left[\\mathbb{E}_{a_t \\sim \\pi_\\phi}\\!\\left[\\alpha\\,\\log\\pi_\\phi(a_t|s_t) - Q_\\theta(s_t,a_t)\\right]\\right]",
+      "role": "loss",
+      "used_in": "training",
+      "hyperparameters": ["alpha=0.2"],
+      "undefined_symbols": [],
+      "paper_section": "§5.4.1 (SAC standard, Haarnoja 2018)",
+      "confidence": 0.85
+    },
+    {
+      "name": "sac_critic_loss",
+      "latex": "J_Q(\\theta) = \\mathbb{E}_{(s,a,r,s')\\sim D}\\!\\left[\\tfrac{1}{2}\\!\\left(Q_\\theta(s,a) - (r + \\gamma\\,\\mathbb{E}_{a'\\sim\\pi}[Q_{\\bar\\theta}(s',a') - \\alpha\\log\\pi(a'|s')])\\right)^2\\right]",
+      "role": "loss",
+      "used_in": "training",
+      "hyperparameters": ["gamma=0.99", "alpha=0.2"],
+      "undefined_symbols": [],
+      "paper_section": "§5.4.1 (SAC standard, Haarnoja 2018)",
+      "confidence": 0.85
+    },
+    {
+      "name": "validation_sharpe",
+      "latex": "S_k = \\frac{\\bar r_k}{\\sigma_k}\\sqrt{A}, \\quad A=252",
+      "role": "other",
+      "used_in": "training",
+      "hyperparameters": [],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 19, §5.6.2",
+      "confidence": 1.0
+    },
+    {
+      "name": "adaptive_retrain_threshold",
+      "latex": "\\theta_k = \\mathrm{median}(S_{k-m},\\dots,S_{k-1}) - \\tfrac{1}{2}\\,\\mathrm{std}(S_{k-m},\\dots,S_{k-1}), \\quad m=5",
+      "role": "other",
+      "used_in": "training",
+      "hyperparameters": ["m=5"],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 18, §5.6.2",
+      "confidence": 1.0
+    },
+    {
+      "name": "abnormal_return_regression",
+      "latex": "R_t^{strategy} = \\alpha + \\beta\\,R_t^{benchmark} + \\epsilon_t",
+      "role": "other",
+      "used_in": "inference",
+      "hyperparameters": [],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 32, §6.4",
+      "confidence": 1.0
+    },
+    {
+      "name": "annualized_return_compounded",
+      "latex": "ARC = \\left(\\prod_{t=1}^{N}(1+R_t)\\right)^{252/N} - 1",
+      "role": "other",
+      "used_in": "inference",
+      "hyperparameters": [],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 20, §5.8.0.1",
+      "confidence": 1.0
+    },
+    {
+      "name": "modified_information_ratio_IR2",
+      "latex": "IR^{**} = IR^* \\cdot \\frac{ARC \\cdot \\mathrm{sign}(ARC)}{MD}",
+      "role": "other",
+      "used_in": "inference",
+      "hyperparameters": [],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 28, §5.8.0.7 (PRIMARY EVALUATION METRIC)",
+      "confidence": 1.0
+    },
+    {
+      "name": "extended_information_ratio_IR3",
+      "latex": "IR^{***} = \\frac{ARC^3}{ASD \\cdot MD \\cdot MLD}",
+      "role": "other",
+      "used_in": "inference",
+      "hyperparameters": [],
+      "undefined_symbols": [],
+      "paper_section": "Eq. 29, §5.8.0.8",
+      "confidence": 1.0
+    }
+  ],
+  "tensor_semantics": [
+    {"name": "raw_prices", "shape_notation": "(N_total, T_full)", "dtype": "float32", "tensor_type": "input", "module": "FeatureExtractor", "confidence": 1.0},
+    {"name": "tradability_mask", "shape_notation": "(N_total, T_full)", "dtype": "bool", "tensor_type": "input", "module": "FeatureExtractor", "confidence": 1.0},
+    {"name": "asset_features", "shape_notation": "(N_t, T=60, F_asset~15)", "dtype": "float32", "tensor_type": "intermediate", "module": "FeatureExtractor", "confidence": 0.85},
+    {"name": "global_features", "shape_notation": "(F_global~7)", "dtype": "float32", "tensor_type": "intermediate", "module": "FeatureExtractor", "confidence": 0.85},
+    {"name": "topk_features", "shape_notation": "(k, T=60, F_asset)", "dtype": "float32", "tensor_type": "intermediate", "module": "TopKSelector", "confidence": 0.95},
+    {"name": "asset_embeddings", "shape_notation": "(B, k, H)", "dtype": "float32", "tensor_type": "intermediate", "module": "LSTMEncoder|TransformerEncoder", "confidence": 0.85},
+    {"name": "state_repr", "shape_notation": "(B, H_state)", "dtype": "float32", "tensor_type": "intermediate", "module": "Policy", "confidence": 0.75},
+    {"name": "action_weights", "shape_notation": "(B, k+1)", "dtype": "float32", "tensor_type": "output", "module": "Policy", "confidence": 0.95},
+    {"name": "reward", "shape_notation": "(B,)", "dtype": "float32", "tensor_type": "output", "module": "PortfolioEnvironment", "confidence": 1.0},
+    {"name": "q_values", "shape_notation": "(B, 1)", "dtype": "float32", "tensor_type": "output", "module": "TwinCritic", "confidence": 0.95}
+  ],
+  "training_pipeline": {
+    "optimizer": {
+      "name": "Adam",
+      "learning_rate": 3e-4,
+      "beta1": 0.9,
+      "beta2": 0.999,
+      "weight_decay": 0.0,
+      "confidence": 0.85
+    },
+    "lr_schedule": {
+      "type": "constant",
+      "warmup_steps": 500,
+      "total_steps": null,
+      "confidence": 0.75
+    },
+    "batch_size": 128,
+    "effective_batch_size": 128,
+    "training_steps": null,
+    "epochs": 50,
+    "mixed_precision": null,
+    "gradient_clipping": null,
+    "data_augmentation": [],
+    "curriculum": "walk-forward optimization (5y train + 1y val + 1y test), 16 non-anchored rolling folds, adaptive retraining based on validation Sharpe (Eq. 18)",
+    "confidence": 0.90
+  },
+  "evaluation_protocol": {
+    "datasets": [
+      {"name": "NASDAQ-100 constituents (daily, yfinance + Bloomberg membership)", "split": "out-of-sample 2009-04-06 to 2026-03-13", "size": null, "publicly_available": true},
+      {"name": "Nikkei 225 constituents (daily, yfinance + Bloomberg membership)", "split": "out-of-sample 2009-04-06 to 2026-03-13", "size": null, "publicly_available": true},
+      {"name": "Euro Stoxx 50 constituents (daily, yfinance + Bloomberg membership)", "split": "out-of-sample 2009-04-01 to 2026-03-13", "size": null, "publicly_available": true}
+    ],
+    "metrics": ["AR", "ARC", "ASD", "MD", "MLD", "IR1", "IR2", "IR3", "Sharpe", "ADT"],
+    "reported_results": [
+      {"metric": "IR2", "dataset": "NASDAQ-100", "split": "OOS", "value": 0.4554, "is_primary": true},
+      {"metric": "ARC", "dataset": "NASDAQ-100", "split": "OOS", "value": 15.64, "is_primary": false},
+      {"metric": "ASD", "dataset": "NASDAQ-100", "split": "OOS", "value": 18.67, "is_primary": false},
+      {"metric": "MD",  "dataset": "NASDAQ-100", "split": "OOS", "value": 28.77, "is_primary": false},
+      {"metric": "Sharpe", "dataset": "NASDAQ-100", "split": "OOS", "value": 0.8759, "is_primary": false},
+      {"metric": "IR2", "dataset": "Nikkei 225", "split": "OOS", "value": 0.1536, "is_primary": true},
+      {"metric": "ARC", "dataset": "Nikkei 225", "split": "OOS", "value": 11.22, "is_primary": false},
+      {"metric": "Sharpe", "dataset": "Nikkei 225", "split": "OOS", "value": 0.6105, "is_primary": false},
+      {"metric": "IR2", "dataset": "Euro Stoxx 50", "split": "OOS", "value": 0.1462, "is_primary": true},
+      {"metric": "ARC", "dataset": "Euro Stoxx 50", "split": "OOS", "value": 8.36, "is_primary": false},
+      {"metric": "Sharpe", "dataset": "Euro Stoxx 50", "split": "OOS", "value": 0.5807, "is_primary": false},
+      {"metric": "IR2", "dataset": "Ensemble (NDX+NKY+SX5E)", "split": "OOS", "value": 0.4096, "is_primary": true},
+      {"metric": "ARC", "dataset": "Ensemble (NDX+NKY+SX5E)", "split": "OOS", "value": 13.03, "is_primary": false},
+      {"metric": "Sharpe", "dataset": "Ensemble (NDX+NKY+SX5E)", "split": "OOS", "value": 0.9062, "is_primary": false}
+    ],
+    "baselines": [
+      "Buy & Hold (QQQ for NDX, FEZ for SX5E, EWJ for NKY)",
+      "Momentum Top-20 (120-day momentum, equal-weight, rebalanced monthly)",
+      "Equal-Weight Monthly over top-k momentum universe",
+      "Markowitz Minimum Variance (5y rolling covariance, monthly rebalance, long-only)"
+    ],
+    "compute": "NVIDIA L4 GPU (24GB VRAM), G2-standard instance, 30GB RAM. ~14h per WFO cycle (LSTM), ~23h per WFO cycle (Transformer).",
+    "special_conditions": [
+      "Statistical significance via Newey-West HAC p-values and stationary block bootstrap (Politis)",
+      "Significance level 10%",
+      "RL strategies do NOT achieve statistically significant excess returns vs B&H on mean returns across any market under HAC inference",
+      "Regression-based abnormal returns (alpha) statistically significant at 10% only for EURO STOXX 50 (LSTM-1, LSTM-2, Transformer) and Ensemble (LSTM_1 p=0.0496, LSTM_2 p=0.0481)"
+    ],
+    "confidence": 0.95
+  },
+  "implementation_assumptions": [
+    {
+      "assumption": "Optimizer is Adam with default betas (0.9, 0.999)",
+      "basis": "SAC standard practice and stable-baselines3 default; paper specifies learning rates but not optimizer brand or betas",
+      "confidence": 0.85,
+      "alternatives": ["AdamW", "RMSprop"],
+      "affects_section": "training_pipeline"
+    },
+    {
+      "assumption": "Transformer encoder uses 4 attention heads",
+      "basis": "Standard ratio H/H_head=32 for H=128; paper specifies only 2 layers and hidden 128",
+      "confidence": 0.65,
+      "alternatives": ["8 heads", "2 heads"],
+      "affects_section": "architecture.TransformerEncoder"
+    },
+    {
+      "assumption": "Critic MLPs are [256, 256] with ReLU activations",
+      "basis": "SAC standard architecture (Haarnoja 2018, stable-baselines3 default)",
+      "confidence": 0.80,
+      "alternatives": ["[400, 300]", "[128, 128]"],
+      "affects_section": "architecture.TwinCritic"
+    },
+    {
+      "assumption": "Cross-sectional attention is scaled dot-product (single layer)",
+      "basis": "Most common attention variant; paper mentions 'cross-sectional attention' without further detail",
+      "confidence": 0.70,
+      "alternatives": ["Additive attention", "Mean pooling"],
+      "affects_section": "architecture.CrossSectionalAttention"
+    },
+    {
+      "assumption": "One environment step per gradient step pair (i.e., agent collects 1 transition then performs 2 gradient steps as per Table 4)",
+      "basis": "Paper specifies 'Gradient steps: 2'; standard interpretation in SAC literature",
+      "confidence": 0.85,
+      "alternatives": ["Batch collection of N steps then 2 grad steps", "Multiple env steps between grad steps"],
+      "affects_section": "training_pipeline"
+    },
+    {
+      "assumption": "Index membership data unavailable publicly (Bloomberg subscription); replaced with current-membership approximation in reproduction",
+      "basis": "Paper relies on Bloomberg Terminal for time-varying membership; yfinance returns only current constituents",
+      "confidence": 0.95,
+      "alternatives": ["Use survivorship-biased current membership", "Manually curate historical membership from Wikipedia/SEC"],
+      "affects_section": "evaluation_protocol.datasets"
+    },
+    {
+      "assumption": "Walk-forward starts after 5-year warmup, first OOS test begins ~2009-04",
+      "basis": "Paper states trading begins 2009-04-01/06 across markets; data starts 2003-01-02 with 5y train + 1y val",
+      "confidence": 0.95,
+      "alternatives": [],
+      "affects_section": "evaluation_protocol"
+    },
+    {
+      "assumption": "Reward scaling factor of 1000 is applied to log-return, factor of 100 to penalties",
+      "basis": "Explicitly stated in Eq. 16/17",
+      "confidence": 1.0,
+      "alternatives": [],
+      "affects_section": "training_pipeline.reward"
+    }
+  ],
+  "ambiguities": [
+    {
+      "location": "training_pipeline.total_steps",
+      "description": "Total training steps per fold not stated. With 5 trading years ≈ 1260 days × 50 epochs = 63000 environment steps per fold (assuming 1 episode = 1 trading year, 50 epochs over the 5y window).",
+      "primary_assumption": 63000,
+      "alternatives": [12600, 252000],
+      "confidence": 0.55
+    },
+    {
+      "location": "architecture.GlobalFeatureProjector.dim",
+      "description": "Hidden dimension of global feature projector and how it is fused with asset embeddings (concat? cross-attention?) not specified",
+      "primary_assumption": "Concat after projection to dim=64, then MLP",
+      "alternatives": ["Cross-attention as queries", "Sum after projection to H"],
+      "confidence": 0.45
+    },
+    {
+      "location": "architecture.HierarchicalDirichletPolicy.equity_split_distribution",
+      "description": "Distribution for equity-vs-cash split in hierarchical policy not stated (Beta? Bernoulli? Dirichlet-2?)",
+      "primary_assumption": "Beta distribution over equity fraction in [0,1]",
+      "alternatives": ["Dirichlet over 2 components", "Sigmoid + deterministic"],
+      "confidence": 0.50
+    },
+    {
+      "location": "training_pipeline.gradient_steps_per_env_step",
+      "description": "Table 4 lists 'Gradient steps: 2' — interpreted as 2 grad updates per env step, but could mean 2 grad steps per epoch",
+      "primary_assumption": "2 SAC gradient updates per 1 env step",
+      "alternatives": ["2 grad steps per epoch"],
+      "confidence": 0.70
+    },
+    {
+      "location": "evaluation_protocol.datasets.historical_membership",
+      "description": "Historical index membership comes from Bloomberg (paywalled). Reproduction must approximate.",
+      "primary_assumption": "Use current index membership as proxy (survivorship-biased); document deviation",
+      "alternatives": ["Manually curate from Wikipedia revision history", "Use academic data provider (CRSP for US only)"],
+      "confidence": 0.30
+    },
+    {
+      "location": "feature_engineering.RSI_MACD_BB_params",
+      "description": "Technical indicators mentioned (RSI, MACD histogram, Bollinger %B) but their lookback windows are not given",
+      "primary_assumption": "Standard defaults — RSI(14), MACD(12,26,9), Bollinger(20, 2σ)",
+      "alternatives": ["RSI(20)", "Custom intervals"],
+      "confidence": 0.75
+    }
+  ],
+  "confidence_annotations": {
+    "architecture": 0.85,
+    "mathematical_spec": 0.95,
+    "tensor_semantics": 0.85,
+    "training_pipeline": 0.88,
+    "evaluation_protocol": 0.95,
+    "implementation_assumptions": 0.80,
+    "overall_sir_confidence": 0.88
+  }
+}
