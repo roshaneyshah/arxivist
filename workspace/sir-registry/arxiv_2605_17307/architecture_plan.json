@@ -1,0 +1,386 @@
+{
+  "paper_id": "arxiv_2605_17307",
+  "plan_version": 1,
+  "created_at": "2026-05-24T12:05:00Z",
+  "framework": {
+    "primary": "pytorch",
+    "python_version": "3.10",
+    "cuda_required": true,
+    "cuda_min_version": "11.8",
+    "use_huggingface": false,
+    "config_library": "yaml",
+    "reasoning": "Paper uses SAC, which is most naturally implemented in PyTorch (stable-baselines3, CleanRL, or custom). The authors do not specify a framework; PyTorch chosen for compatibility with most academic SAC implementations and to allow custom LSTM/Transformer encoders + Dirichlet policy heads. CUDA recommended due to ~14-23h per fold reported on NVIDIA L4."
+  },
+  "module_hierarchy": [
+    {
+      "path": "src/portfolio_rl/data",
+      "description": "Data ingestion: price download (yfinance), index membership stub, feature engineering, top-k pre-selection.",
+      "sir_modules_mapped": ["FeatureExtractor", "TopKSelector"],
+      "classes": [
+        {
+          "name": "PriceDownloader",
+          "base_class": "object",
+          "public_methods": [
+            {"name": "download", "signature": "download(self, tickers: List[str], start: str, end: str) -> pd.DataFrame", "returns": "Adjusted close prices DataFrame (date x ticker)"}
+          ]
+        },
+        {
+          "name": "IndexMembership",
+          "base_class": "object",
+          "public_methods": [
+            {"name": "get_active_tickers", "signature": "get_active_tickers(self, index: str, date: pd.Timestamp) -> List[str]", "returns": "List of tickers in the index on the given date (stub returns current membership)"}
+          ]
+        },
+        {
+          "name": "FeatureBuilder",
+          "base_class": "object",
+          "public_methods": [
+            {"name": "compute_asset_features", "signature": "compute_asset_features(self, prices: pd.DataFrame) -> np.ndarray", "returns": "(N, T_full, F_asset)"},
+            {"name": "compute_global_features", "signature": "compute_global_features(self, market_proxy: pd.DataFrame, vix: pd.DataFrame) -> np.ndarray", "returns": "(T_full, F_global)"}
+          ]
+        },
+        {
+          "name": "TopKSelector",
+          "base_class": "object",
+          "public_methods": [
+            {"name": "select", "signature": "select(self, prices: pd.DataFrame, date: pd.Timestamp, k: int, horizon: int = 120) -> List[str]", "returns": "Top-k tickers by 120-day momentum"}
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/portfolio_rl/envs",
+      "description": "Gymnasium-style portfolio environment implementing reward (Eq. 16/17), turnover and HHI penalties.",
+      "sir_modules_mapped": ["PortfolioEnvironment"],
+      "classes": [
+        {
+          "name": "PortfolioEnv",
+          "base_class": "gymnasium.Env",
+          "public_methods": [
+            {"name": "reset", "signature": "reset(self, *, seed=None, options=None) -> Tuple[np.ndarray, dict]", "returns": "(state, info)"},
+            {"name": "step", "signature": "step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, dict]", "returns": "(next_state, reward, terminated, truncated, info)"},
+            {"name": "_compute_reward", "signature": "_compute_reward(self, w_new, w_prev, r_assets, r_benchmark) -> float", "returns": "Scaled reward per Eq. 16/17"}
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/portfolio_rl/models/encoders",
+      "description": "Per-asset sequence encoders.",
+      "sir_modules_mapped": ["LSTMEncoder", "TransformerEncoder", "CrossSectionalAttention"],
+      "classes": [
+        {
+          "name": "LSTMEncoder",
+          "base_class": "torch.nn.Module",
+          "public_methods": [
+            {"name": "forward", "signature": "forward(self, x: torch.Tensor) -> torch.Tensor", "returns": "(B, k, H)"}
+          ]
+        },
+        {
+          "name": "TransformerEncoder",
+          "base_class": "torch.nn.Module",
+          "public_methods": [
+            {"name": "forward", "signature": "forward(self, x: torch.Tensor) -> torch.Tensor", "returns": "(B, k, H)"}
+          ]
+        },
+        {
+          "name": "CrossSectionalAttention",
+          "base_class": "torch.nn.Module",
+          "public_methods": [
+            {"name": "forward", "signature": "forward(self, asset_emb: torch.Tensor, global_feat: torch.Tensor) -> torch.Tensor", "returns": "(B, H_state)"}
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/portfolio_rl/models/policies",
+      "description": "Dirichlet policy heads (flat and hierarchical).",
+      "sir_modules_mapped": ["FlatDirichletPolicy", "HierarchicalDirichletPolicy"],
+      "classes": [
+        {
+          "name": "FlatDirichletPolicy",
+          "base_class": "torch.nn.Module",
+          "public_methods": [
+            {"name": "forward", "signature": "forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]", "returns": "(action, log_prob)"}
+          ]
+        },
+        {
+          "name": "HierarchicalDirichletPolicy",
+          "base_class": "torch.nn.Module",
+          "public_methods": [
+            {"name": "forward", "signature": "forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]", "returns": "(action, log_prob)"}
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/portfolio_rl/models/critics",
+      "description": "Twin Q-network for SAC.",
+      "sir_modules_mapped": ["TwinCritic"],
+      "classes": [
+        {
+          "name": "TwinCritic",
+          "base_class": "torch.nn.Module",
+          "public_methods": [
+            {"name": "forward", "signature": "forward(self, state: torch.Tensor, action: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]", "returns": "(q1, q2)"}
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/portfolio_rl/agents",
+      "description": "Soft Actor-Critic agent (custom implementation).",
+      "sir_modules_mapped": ["SACAgent", "ReplayBuffer"],
+      "classes": [
+        {
+          "name": "ReplayBuffer",
+          "base_class": "object",
+          "public_methods": [
+            {"name": "push", "signature": "push(self, s, a, r, s_next, done) -> None", "returns": "None"},
+            {"name": "sample", "signature": "sample(self, batch_size: int) -> Tuple[torch.Tensor, ...]", "returns": "Batch of transitions"}
+          ]
+        },
+        {
+          "name": "SACAgent",
+          "base_class": "object",
+          "public_methods": [
+            {"name": "select_action", "signature": "select_action(self, state, deterministic=False) -> np.ndarray", "returns": "Action vector (k+1,)"},
+            {"name": "update", "signature": "update(self, batch) -> dict", "returns": "Loss metrics"}
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/portfolio_rl/training",
+      "description": "Walk-forward orchestration and adaptive retraining logic.",
+      "sir_modules_mapped": ["WalkForwardOrchestrator"],
+      "classes": [
+        {
+          "name": "WalkForwardRunner",
+          "base_class": "object",
+          "public_methods": [
+            {"name": "run", "signature": "run(self) -> List[dict]", "returns": "List of fold results (equity, weights, metrics)"}
+          ]
+        },
+        {
+          "name": "AdaptiveRetrainPolicy",
+          "base_class": "object",
+          "public_methods": [
+            {"name": "should_retrain", "signature": "should_retrain(self, sharpe_history: List[float], folds_since_last: int) -> bool", "returns": "Bool"}
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/portfolio_rl/evaluation",
+      "description": "Performance metrics and statistical tests.",
+      "sir_modules_mapped": [],
+      "classes": [
+        {
+          "name": "PerformanceMetrics",
+          "base_class": "object",
+          "public_methods": [
+            {"name": "compute_all", "signature": "compute_all(self, returns: pd.Series) -> dict", "returns": "ARC, ASD, MD, MLD, IR1, IR2, IR3, Sharpe"}
+          ]
+        },
+        {
+          "name": "StatisticalTests",
+          "base_class": "object",
+          "public_methods": [
+            {"name": "hac_pvalue", "signature": "hac_pvalue(self, strategy_returns, benchmark_returns) -> float", "returns": "Newey-West HAC p-value"},
+            {"name": "block_bootstrap_pvalue", "signature": "block_bootstrap_pvalue(self, strategy_returns, benchmark_returns, n_boot=10000) -> float", "returns": "Bootstrap p-value"}
+          ]
+        }
+      ]
+    }
+  ],
+  "tensor_flows": [
+    {
+      "name": "policy_forward",
+      "input": {"name": "state", "shape": "(B, k, T=60, F_asset) + (B, F_global)", "dtype": "float32"},
+      "output": {"name": "action", "shape": "(B, k+1)", "dtype": "float32"},
+      "steps": [
+        "Encode per-asset sequences with LSTM/Transformer -> (B, k, H)",
+        "Project global features -> (B, H_global)",
+        "Cross-sectional attention over assets, fuse with global -> (B, H_state)",
+        "Dirichlet head: state -> concentration alpha (B, k+1) via softplus",
+        "Sample action ~ Dirichlet(alpha)",
+        "Compute log_prob for SAC entropy term"
+      ]
+    },
+    {
+      "name": "env_step",
+      "input": {"name": "action", "shape": "(k+1,)", "dtype": "float32"},
+      "output": {"name": "reward+next_state", "shape": "scalar + (k, T, F_asset)", "dtype": "float32"},
+      "steps": [
+        "Compute portfolio return r_p = sum(w_i * R_i) + w_cash * 0",
+        "Compute turnover TO = sum |w_new - w_prev|",
+        "Apply transaction cost: r_p_net = r_p - 0.0002 * TO / 2",
+        "Compute HHI = sum(w_i^2), HHI_min = 1/N_t",
+        "Compute scaled reward: 1000*log(1+r_p_net) - 0.003*TO*100 - lambda_conc*(HHI - HHI_min)*100",
+        "Advance one trading day; recompute features for next state"
+      ]
+    },
+    {
+      "name": "sac_update",
+      "input": {"name": "batch", "shape": "(B=128, transitions)", "dtype": "float32"},
+      "output": {"name": "losses", "shape": "scalars", "dtype": "float32"},
+      "steps": [
+        "Sample batch from ReplayBuffer (capacity=20000)",
+        "Compute target Q: r + gamma * (min(Q1', Q2')(s', a') - alpha*log_pi(a'|s'))",
+        "Critic loss: MSE(Q_i(s,a), target) for i=1,2 — backprop, Adam lr=5e-4",
+        "Actor loss: E[alpha*log_pi(a|s) - min(Q1, Q2)(s, a)] — backprop, Adam lr=3e-4",
+        "Soft target update: theta_target = tau*theta + (1-tau)*theta_target, tau=0.005",
+        "Repeat for 2 gradient steps per env step"
+      ]
+    }
+  ],
+  "config_schema": {
+    "model": {
+      "encoder_type": "lstm | transformer",
+      "lstm_hidden": "[64, 128]",
+      "lstm_layers": 1,
+      "transformer_hidden": 128,
+      "transformer_layers": 2,
+      "transformer_heads": 4,
+      "policy_type": "flat_dirichlet | hierarchical_dirichlet",
+      "critic_hidden": [256, 256],
+      "allow_cash": "bool"
+    },
+    "training": {
+      "lr_actor": 3e-4,
+      "lr_critic": 5e-4,
+      "lr_entropy": 3e-4,
+      "alpha": 0.2,
+      "gamma": 0.99,
+      "tau": 0.005,
+      "batch_size": 128,
+      "replay_capacity": 20000,
+      "warmup_steps": 500,
+      "gradient_steps": 2,
+      "epochs": 50,
+      "early_stopping_patience": 8
+    },
+    "data": {
+      "market": "ndx | nky | sx5e",
+      "lookback_window": 60,
+      "topk": "[10, 20, 30]",
+      "momentum_horizon": 120,
+      "start_date": "2003-01-02",
+      "end_date": "2026-03-13",
+      "transaction_cost_bps": 2.0
+    },
+    "evaluation": {
+      "train_years": 5,
+      "val_years": 1,
+      "test_years": 1,
+      "num_folds": 16,
+      "adaptive_retrain_window": 5,
+      "max_folds_without_retraining": 3,
+      "reward_type": "log_return_absolute | benchmark_relative",
+      "lambda_turnover": 0.003,
+      "lambda_concentration": "0.0 | 0.1 | 0.5"
+    },
+    "hardware": {
+      "device": "cuda | cpu",
+      "num_workers": 2,
+      "seed": 42
+    }
+  },
+  "dependencies": {
+    "runtime": [
+      {"package": "torch", "version": ">=2.0,<2.4", "reason": "Core deep learning (SAC, encoders)"},
+      {"package": "gymnasium", "version": ">=0.29", "reason": "Environment interface"},
+      {"package": "numpy", "version": ">=1.24,<2.0", "reason": "Array ops"},
+      {"package": "pandas", "version": ">=2.0", "reason": "Time series handling"},
+      {"package": "yfinance", "version": ">=0.2.40", "reason": "Free price data (Bloomberg unavailable)"},
+      {"package": "scipy", "version": ">=1.11", "reason": "Statistical functions"},
+      {"package": "statsmodels", "version": ">=0.14", "reason": "Newey-West HAC standard errors"},
+      {"package": "arch", "version": ">=6.3", "reason": "Stationary block bootstrap (Politis)"},
+      {"package": "scikit-learn", "version": ">=1.3", "reason": "Markowitz baseline (covariance)"},
+      {"package": "ta", "version": ">=0.11.0", "reason": "Technical indicators (RSI, MACD, Bollinger)"},
+      {"package": "pyyaml", "version": ">=6.0", "reason": "Config files"},
+      {"package": "tqdm", "version": ">=4.66", "reason": "Progress bars"},
+      {"package": "matplotlib", "version": ">=3.7", "reason": "Plots in notebook"}
+    ],
+    "dev": [
+      {"package": "pytest", "version": ">=7.4"},
+      {"package": "black", "version": ">=24.1"},
+      {"package": "ruff", "version": ">=0.4"},
+      {"package": "jupyter", "version": ">=1.0"},
+      {"package": "ipykernel", "version": ">=6.29"}
+    ]
+  },
+  "entrypoints": [
+    {
+      "filename": "train.py",
+      "purpose": "Run walk-forward training for one (market, config) combination",
+      "cli_args": [
+        {"flag": "--config", "type": "str", "required": true, "default": null, "help": "Path to YAML config (e.g. configs/lstm_2_ndx.yaml)"},
+        {"flag": "--market", "type": "str", "required": false, "default": "ndx", "help": "Market: ndx | nky | sx5e"},
+        {"flag": "--seed", "type": "int", "required": false, "default": 42, "help": "Random seed"},
+        {"flag": "--output-dir", "type": "str", "required": false, "default": "runs/", "help": "Output directory for checkpoints and logs"}
+      ]
+    },
+    {
+      "filename": "evaluate.py",
+      "purpose": "Compute performance metrics + statistical tests on saved OOS returns",
+      "cli_args": [
+        {"flag": "--run-dir", "type": "str", "required": true, "default": null, "help": "Path to a training run directory"},
+        {"flag": "--benchmark", "type": "str", "required": false, "default": null, "help": "Benchmark ticker (QQQ, EWJ, FEZ)"}
+      ]
+    },
+    {
+      "filename": "inference.py",
+      "purpose": "Generate weights for a single date using a trained checkpoint",
+      "cli_args": [
+        {"flag": "--checkpoint", "type": "str", "required": true, "default": null, "help": "Path to model checkpoint"},
+        {"flag": "--date", "type": "str", "required": true, "default": null, "help": "Inference date (YYYY-MM-DD)"}
+      ]
+    }
+  ],
+  "docker_spec": {
+    "base_image": "pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime",
+    "system_deps": ["git", "build-essential", "curl"],
+    "workdir": "/workspace",
+    "default_cmd": "python train.py --config configs/lstm_2_ndx.yaml"
+  },
+  "risk_assessment": [
+    {
+      "severity": "High",
+      "description": "Historical index membership requires Bloomberg Terminal (paywalled). Reproduction uses current membership as fallback, introducing survivorship bias that may inflate measured returns.",
+      "source": "Paper §5.1 (Data) and Bibliography",
+      "mitigation": "Document deviation in README; provide hook (data/membership/) to load user-supplied CSVs of historical constituents; warn loudly at runtime."
+    },
+    {
+      "severity": "High",
+      "description": "Full reproduction is computationally expensive: ~14h LSTM / ~23h Transformer per fold × 16 folds × 5 configs × 3 markets ≈ 3,400+ GPU-hours on NVIDIA L4.",
+      "source": "Paper §5.7 (Hardware)",
+      "mitigation": "Provide --quick-test flag (1 fold, 2 epochs) for smoke testing; document that the notebook only runs a tiny synthetic-data demo."
+    },
+    {
+      "severity": "Medium",
+      "description": "Equity-vs-cash split distribution for HierarchicalDirichletPolicy is not specified in the paper.",
+      "source": "Paper §5.4.3",
+      "mitigation": "Use Beta distribution as primary assumption (documented in ambiguities); expose `equity_split_dist` config flag with alternatives (dirichlet_2, sigmoid_deterministic)."
+    },
+    {
+      "severity": "Medium",
+      "description": "Critic network depth/width and exact attention variant (cross-sectional) are inferred from SAC defaults.",
+      "source": "SIR implementation_assumptions",
+      "mitigation": "Expose `critic_hidden` and `attention_type` config flags; default to stable-baselines3 SAC defaults."
+    },
+    {
+      "severity": "Medium",
+      "description": "Total training steps per fold and adaptive retraining annualization factor (252?) not explicitly given.",
+      "source": "Paper §5.6.2",
+      "mitigation": "Use 252 trading days/year annualization; expose `steps_per_epoch` and `annualization_factor` as config knobs."
+    },
+    {
+      "severity": "Low",
+      "description": "Technical indicator parameters (RSI window, MACD lookbacks, Bollinger σ) not specified.",
+      "source": "Paper §5.1.3",
+      "mitigation": "Use canonical defaults RSI(14), MACD(12,26,9), Bollinger(20, 2σ); document in code comments."
+    }
+  ]
+}

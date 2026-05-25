@@ -1,0 +1,24 @@
+name: portfolio_rl
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch>=2.0
+  - pytorch-cuda=11.8
+  - pandas>=2.0
+  - numpy>=1.24,<2.0
+  - scipy>=1.11
+  - scikit-learn>=1.3
+  - statsmodels>=0.14
+  - matplotlib>=3.7
+  - tqdm>=4.66
+  - pyyaml>=6.0
+  - jupyter>=1.0
+  - pip:
+      - gymnasium>=0.29
+      - yfinance>=0.2.40
+      - arch>=6.3
+      - ta>=0.11.0
