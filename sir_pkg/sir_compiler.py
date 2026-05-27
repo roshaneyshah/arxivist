@@ -13,28 +13,656 @@ Run this after adding new SIRs to refresh the compiled view.
 
 USAGE
 -----
-  # From the sir/compiler/ directory (default registry path)
   python sir_compiler.py
-
-  # Custom registry path
   python sir_compiler.py --registry-dir /path/to/workspace/sir-registry/
-
-  # Skip the similarity matrix (faster, useful for large registries)
   python sir_compiler.py --no-matrix
-
-  # Verbose output
   python sir_compiler.py --verbose
-
-OUTPUT
-------
-  All three files are written to the registry directory root:
-    workspace/sir-registry/compiled_index.json
-    workspace/sir-registry/similarity_matrix.json
-    workspace/sir-registry/registry_stats.json
-
-  A summary is printed to the terminal on completion.
 """
 
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+# ============================================================
+# 1. REGISTRY LOADING
+# ============================================================
+
+def load_registry(registry_dir: Path, verbose: bool = False) -> list[dict]:
+    """Load all canonical sir.json files, skipping versioned copies.
+
+    Deduplicates by paper_id — if the same paper_id appears in multiple
+    folders, only the most recently modified copy is kept.
+    """
+    seen: dict[str, tuple[float, dict]] = {}  # paper_id -> (mtime, sir)
+    skipped = []
+
+    for sir_path in sorted(registry_dir.rglob("sir.json")):
+        if "versions" in sir_path.parts:
+            continue
+        try:
+            with open(sir_path) as f:
+                sir = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            skipped.append((str(sir_path), str(e)))
+            continue
+
+        if "paper_id" not in sir:
+            sir["paper_id"] = sir_path.parent.name
+
+        sir["_path"] = str(sir_path)
+        mtime = sir_path.stat().st_mtime
+        pid = sir["paper_id"]
+
+        if pid not in seen or mtime > seen[pid][0]:
+            seen[pid] = (mtime, sir)
+            if verbose:
+                print(f"  loaded: {pid}")
+        else:
+            if verbose:
+                print(f"  duplicate skipped: {sir_path} (keeping newer copy)")
+
+    if skipped:
+        print(f"\nWarning: skipped {len(skipped)} file(s) due to errors:")
+        for path, err in skipped:
+            print(f"  {path}: {err}")
+
+    return [sir for _, sir in seen.values()]
+
+
+# ============================================================
+# 2. FIELD EXTRACTION HELPERS
+# ============================================================
+
+def _get(obj, *keys, default=None):
+    """Safely traverse nested dicts."""
+    cur = obj
+    for k in keys:
+        if not isinstance(cur, dict):
+            return default
+        cur = cur.get(k, default)
+        if cur is None:
+            return default
+    return cur
+
+
+def _list_or_values(obj) -> list:
+    """Return obj if list, unwrap first list inside a dict, else []."""
+    if isinstance(obj, list):
+        return obj
+    if isinstance(obj, dict):
+        for v in obj.values():
+            if isinstance(v, list):
+                return v
+    return []
+
+
+def _extract_domain(sir: dict) -> str:
+    """Extract domain label — treats None, empty string, whitespace as Unknown."""
+    prov = sir.get("provenance", {})
+    for field in ("subject_domain", "domain"):
+        val = prov.get(field)
+        if val and str(val).strip():
+            return str(val).strip()
+    top = sir.get("domain")
+    if top and str(top).strip():
+        return str(top).strip()
+    return "Unknown"
+
+
+def _extract_metrics(sir: dict) -> list[str]:
+    """
+    Extract metric names from evaluation_protocol.
+    Handles four observed layouts:
+      1. {"metrics": ["name", ...]}                          — list of strings
+      2. {"metrics": [{"name": ...}, ...]}                   — list of dicts
+      3. {"benchmarks": [{"metrics": ["name", ...], ...}]}   — EVOLVEMEM style
+      4. {"results_table": [{"metric": ...}]}                — table rows
+    """
+    ep = sir.get("evaluation_protocol", {})
+    if not isinstance(ep, dict):
+        return []
+
+    metrics: list[str] = []
+
+    # Layout 1 & 2: direct metrics field
+    raw = ep.get("metrics", [])
+    if isinstance(raw, list):
+        for m in raw:
+            if isinstance(m, str) and m.strip():
+                metrics.append(m.strip())
+            elif isinstance(m, dict) and m.get("name"):
+                metrics.append(m["name"])
+
+    # Layout 3: benchmarks list with nested metrics
+    for bench in ep.get("benchmarks", []):
+        if isinstance(bench, dict):
+            for m in bench.get("metrics", []):
+                if isinstance(m, str) and m.strip():
+                    metrics.append(m.strip())
+
+    # Layout 4: results_table rows
+    for row in ep.get("results_table", []):
+        if isinstance(row, dict) and row.get("metric"):
+            metrics.append(row["metric"])
+
+    # reported_results fallback
+    for r in ep.get("reported_results", []):
+        if isinstance(r, dict) and r.get("metric"):
+            metrics.append(r["metric"])
+
+    return list(dict.fromkeys(m for m in metrics if m))  # deduplicate, preserve order
+
+
+def _extract_datasets(sir: dict) -> list[str]:
+    """
+    Extract dataset names from evaluation_protocol.
+    Handles:
+      1. {"datasets": ["name", ...]}                   — list of strings
+      2. {"datasets": [{"name": ..., ...}]}            — list of dicts
+      3. {"dataset": {"name": ...}}                    — single dict (QSMOTR)
+      4. {"dataset": "name"}                           — plain string
+      5. {"benchmarks": [{"name": ...}]}               — EVOLVEMEM benchmarks
+    Crucially: if a value is a plain string it is treated as ONE dataset name,
+    never iterated character by character.
+    """
+    ep = sir.get("evaluation_protocol", {})
+    if not isinstance(ep, dict):
+        return []
+
+    datasets: list[str] = []
+
+    # datasets (plural) field
+    raw = ep.get("datasets")
+    if isinstance(raw, list):
+        for d in raw:
+            if isinstance(d, str) and d.strip():
+                datasets.append(d.strip())  # whole string = one dataset name
+            elif isinstance(d, dict) and d.get("name"):
+                datasets.append(d["name"])
+    elif isinstance(raw, str) and raw.strip():
+        datasets.append(raw.strip())
+
+    # dataset (singular) field
+    single = ep.get("dataset")
+    if isinstance(single, dict) and single.get("name"):
+        datasets.append(single["name"])
+    elif isinstance(single, str) and single.strip():
+        datasets.append(single.strip())
+
+    # benchmarks list (EVOLVEMEM)
+    for bench in ep.get("benchmarks", []):
+        if isinstance(bench, dict) and bench.get("name"):
+            datasets.append(bench["name"])
+
+    return list(dict.fromkeys(d for d in datasets if d))
+
+
+def _extract_optimizer(sir: dict) -> str | None:
+    """Extract optimizer name from training_pipeline, handling multiple layouts."""
+    tp = sir.get("training_pipeline", {})
+    if not isinstance(tp, dict):
+        return None
+
+    opt = tp.get("optimizer")
+    if isinstance(opt, dict):
+        name = opt.get("name")
+        return str(name) if name else None
+    if isinstance(opt, str) and opt.strip():
+        return opt.strip()
+
+    # Some SIRs embed optimizer inside classification_training or similar
+    for key in ("classification_training", "training_config"):
+        sub = tp.get(key, {})
+        if isinstance(sub, dict):
+            name = _get(sub, "optimizer", "name") or sub.get("optimizer")
+            if name:
+                return str(name)
+
+    return None
+
+
+def _extract_lr_schedule(sir: dict) -> str | None:
+    tp = sir.get("training_pipeline", {})
+    if not isinstance(tp, dict):
+        return None
+    sched = tp.get("lr_schedule", {})
+    if isinstance(sched, dict):
+        return sched.get("type")
+    if isinstance(sched, str):
+        return sched
+    return None
+
+
+def _extract_reported_results(sir: dict) -> list[dict]:
+    ep = sir.get("evaluation_protocol", {})
+    if not isinstance(ep, dict):
+        return []
+
+    results = []
+
+    # Standard reported_results array
+    for r in ep.get("reported_results", []):
+        if isinstance(r, dict):
+            results.append(r)
+
+    # results_table (QSMOTR style)
+    for r in ep.get("results_table", []):
+        if isinstance(r, dict):
+            results.append(r)
+
+    # main_results dict (EVOLVEMEM style)
+    main = ep.get("main_results", {})
+    if isinstance(main, dict):
+        for key, val in main.items():
+            if isinstance(val, dict):
+                results.append({"metric": key, **val})
+
+    return results
+
+
+# ============================================================
+# 3. SIR FLATTENER
+# ============================================================
+
+def flatten_sir(sir: dict) -> dict:
+    """Extract all key fields into a flat, indexable record."""
+    prov = sir.get("provenance", {})
+    arch = sir.get("architecture", {})
+    tp   = sir.get("training_pipeline", {}) if isinstance(sir.get("training_pipeline"), dict) else {}
+    ca   = sir.get("confidence_annotations", {}) if isinstance(sir.get("confidence_annotations"), dict) else {}
+
+    # --- Module names: handle list-of-dicts, dict-of-dicts, dict-of-anything ---
+    raw_modules = arch.get("modules", [])
+    if isinstance(raw_modules, dict):
+        # Could be {"layer_1": {"name": "..."}} or just {"layer_1": {...}}
+        module_names = []
+        for k, v in raw_modules.items():
+            name = v.get("name", k) if isinstance(v, dict) else k
+            module_names.append(name)
+    elif isinstance(raw_modules, list):
+        module_names = [m.get("name", "") for m in raw_modules if isinstance(m, dict) and m.get("name")]
+    else:
+        module_names = []
+
+    # Also check architecture.layers (EVOLVEMEM)
+    if not module_names:
+        layers = arch.get("layers", {})
+        if isinstance(layers, dict):
+            module_names = [v.get("name", k) if isinstance(v, dict) else k for k, v in layers.items()]
+
+    # --- Equations ---
+    math_raw = sir.get("mathematical_spec", [])
+    math_items = _list_or_values(math_raw)
+    equation_names = [e.get("name", "") for e in math_items if isinstance(e, dict) and e.get("name")]
+    equation_roles = list({e.get("role", "") for e in math_items if isinstance(e, dict) and e.get("role")})
+
+    # --- Tensors ---
+    tensor_raw = sir.get("tensor_semantics", [])
+    tensor_items = _list_or_values(tensor_raw)
+    tensor_names = [t.get("name", "") for t in tensor_items if isinstance(t, dict) and t.get("name")]
+
+    # --- Assumptions & ambiguities ---
+    assumptions = _list_or_values(sir.get("implementation_assumptions", []))
+    ambiguities  = _list_or_values(sir.get("ambiguities", []))
+    low_conf_assumptions = [
+        a for a in assumptions
+        if isinstance(a, dict) and (a.get("confidence") or 1.0) < 0.7
+    ]
+
+    # --- Confidence ---
+    overall_conf = ca.get("overall_sir_confidence")
+    if overall_conf is None:
+        weights = {
+            "architecture": 0.30, "mathematical_spec": 0.20,
+            "training_pipeline": 0.20, "evaluation_protocol": 0.15,
+            "tensor_semantics": 0.10, "implementation_assumptions": 0.05,
+        }
+        ws, wt = 0.0, 0.0
+        for sec, w in weights.items():
+            c = ca.get(sec)
+            if c is not None:
+                ws += c * w; wt += w
+        overall_conf = round(ws / wt, 4) if wt > 0 else None
+
+    metrics  = _extract_metrics(sir)
+    datasets = _extract_datasets(sir)
+    reported = _extract_reported_results(sir)
+
+    return {
+        # Identity
+        "paper_id":    sir.get("paper_id", ""),
+        "sir_version": sir.get("sir_version", 1),
+        "sir_path":    sir.get("_path", ""),
+
+        # Provenance
+        "title":           prov.get("title", ""),
+        "authors":         prov.get("authors", []),
+        "arxiv_id":        prov.get("arxiv_id"),
+        "domain":          _extract_domain(sir),
+        "abstract_preview": (prov.get("abstract", "") or "")[:300],
+        "key_claims":      prov.get("key_claims", []),
+        "parsed_at":       prov.get("parsed_at", ""),
+
+        # Architecture
+        "primary_variant": arch.get("primary_variant") or arch.get("description", ""),
+        "module_names":    module_names,
+        "n_modules":       len(module_names),
+
+        # Math
+        "equation_names": equation_names,
+        "equation_roles": equation_roles,
+        "n_equations":    len(equation_names),
+
+        # Tensors
+        "tensor_names": tensor_names,
+        "n_tensors":    len(tensor_names),
+
+        # Training
+        "optimizer":        _extract_optimizer(sir),
+        "learning_rate":    _get(tp, "optimizer", "learning_rate"),
+        "lr_schedule":      _extract_lr_schedule(sir),
+        "batch_size":       tp.get("batch_size") or tp.get("effective_batch_size"),
+        "mixed_precision":  tp.get("mixed_precision"),
+        "training_steps":   tp.get("training_steps"),
+        "epochs":           tp.get("epochs"),
+        "has_evolution_loop": "evolution_loop" in tp,
+
+        # Evaluation
+        "metrics":             metrics,
+        "datasets":            datasets,
+        "n_reported_results":  len(reported),
+        "primary_results":     [r for r in reported if r.get("is_primary")],
+
+        # Assumptions
+        "n_assumptions":             len(assumptions),
+        "n_low_conf_assumptions":    len(low_conf_assumptions),
+        "n_ambiguities":             len(ambiguities),
+
+        # Confidence
+        "confidence": {
+            "overall":                    overall_conf,
+            "architecture":               ca.get("architecture"),
+            "mathematical_spec":          ca.get("mathematical_spec"),
+            "training_pipeline":          ca.get("training_pipeline"),
+            "evaluation_protocol":        ca.get("evaluation_protocol"),
+            "tensor_semantics":           ca.get("tensor_semantics"),
+            "implementation_assumptions": ca.get("implementation_assumptions"),
+        },
+    }
+
+
+# ============================================================
+# 4. SIMILARITY MATRIX
+# ============================================================
+
+def build_similarity_matrix(sirs: list[dict], verbose: bool = False, sir_diff_path: str | None = None) -> dict:
+    n = len(sirs)
+    paper_ids = [s.get("paper_id", f"paper_{i}") for i, s in enumerate(sirs)]
+
+    compute_diff_fn = None
+    try:
+        import importlib.util
+
+        # Build candidate list — explicit path goes first
+        search_paths = []
+        if sir_diff_path:
+            search_paths.append(Path(sir_diff_path).resolve())
+
+        # Auto-discovery relative to the registry dir (passed via global args)
+        # and common relative locations
+        search_paths += [
+            Path("../diff/sir_diff.py").resolve(),
+            Path("../../sir/diff/sir_diff.py").resolve(),
+            Path("sir/diff/sir_diff.py").resolve(),
+        ]
+
+        for candidate in search_paths:
+            if candidate.exists():
+                spec = importlib.util.spec_from_file_location("sir_diff", str(candidate))
+                mod  = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                compute_diff_fn = mod.compute_diff
+                print(f"  Using sir_diff from: {candidate}")
+                break
+
+        if compute_diff_fn is None:
+            print("  sir_diff.py not found — using fallback Jaccard similarity")
+            print("  Tip: pass --sir-diff /full/path/to/sir/diff/sir_diff.py to fix this")
+    except Exception as e:
+        print(f"  sir_diff import failed: {e} — using fallback Jaccard similarity")
+
+    scores: dict[str, float] = {}
+    total_pairs = n * (n - 1) // 2
+    computed = 0
+
+    for i in range(n):
+        for j in range(i, n):
+            id_a, id_b = paper_ids[i], paper_ids[j]
+            if i == j:
+                scores[f"{id_a}||{id_b}"] = 1.0
+                continue
+            try:
+                sim = compute_diff_fn(sirs[i], sirs[j]).overall_similarity if compute_diff_fn else _jaccard_sim(sirs[i], sirs[j])
+            except Exception as e:
+                if verbose:
+                    print(f"  Warning: diff failed {id_a} vs {id_b}: {e}")
+                sim = 0.0
+
+            scores[f"{id_a}||{id_b}"] = round(sim, 4)
+            scores[f"{id_b}||{id_a}"] = round(sim, 4)
+            computed += 1
+            if verbose:
+                print(f"  [{computed}/{total_pairs}] {id_a} vs {id_b}: {sim:.4f}")
+
+    matrix = {pid: {other: scores.get(f"{pid}||{other}", 0.0) for other in paper_ids} for pid in paper_ids}
+
+    neighbors = {}
+    for pid in paper_ids:
+        ranked = sorted([(o, s) for o, s in matrix[pid].items() if o != pid], key=lambda x: x[1], reverse=True)
+        neighbors[pid] = [{"paper_id": o, "similarity": s} for o, s in ranked[:3]]
+
+    return {
+        "paper_ids": paper_ids,
+        "matrix": matrix,
+        "neighbors": neighbors,
+        "method": "sir_diff" if compute_diff_fn else "jaccard_fallback",
+        "n_pairs_computed": computed,
+    }
+
+
+def _jaccard_sim(sir_a: dict, sir_b: dict) -> float:
+    def mods(sir):
+        flat = flatten_sir(sir)
+        return {n.lower() for n in flat.get("module_names", []) if n}
+    def eqs(sir):
+        flat = flatten_sir(sir)
+        return {n.lower() for n in flat.get("equation_names", []) if n}
+    def mets(sir):
+        flat = flatten_sir(sir)
+        return {m.lower() for m in flat.get("metrics", []) if m}
+
+    def J(a, b):
+        if not a and not b: return 1.0
+        u = a | b
+        return len(a & b) / len(u) if u else 1.0
+
+    return round(0.40 * J(mods(sir_a), mods(sir_b)) + 0.30 * J(eqs(sir_a), eqs(sir_b)) + 0.30 * J(mets(sir_a), mets(sir_b)), 4)
+
+
+# ============================================================
+# 5. REGISTRY STATISTICS
+# ============================================================
+
+def compute_stats(records: list[dict]) -> dict:
+    n = len(records)
+    if n == 0:
+        return {"n_papers": 0}
+
+    domains    = Counter(r.get("domain", "Unknown") for r in records)
+    optimizers = Counter(r.get("optimizer") or "unspecified" for r in records)
+    schedules  = Counter(r.get("lr_schedule") or "unspecified" for r in records)
+
+    all_metrics  = Counter(m for r in records for m in r.get("metrics", []) if m)
+    all_datasets = Counter(d for r in records for d in r.get("datasets", []) if d)
+
+    conf_vals = [r["confidence"]["overall"] for r in records if r["confidence"]["overall"] is not None]
+    conf_tiers = Counter()
+    for v in conf_vals:
+        if v >= 0.9:   conf_tiers["explicit (≥0.9)"] += 1
+        elif v >= 0.7: conf_tiers["implied (0.7–0.89)"] += 1
+        elif v >= 0.5: conf_tiers["inferred (0.5–0.69)"] += 1
+        else:          conf_tiers["speculative (<0.5)"] += 1
+
+    mod_counts = [r["n_modules"] for r in records if r["n_modules"] > 0]
+    ass_counts = [r["n_assumptions"] for r in records]
+    needs_review = list(dict.fromkeys(r["paper_id"] for r in records if r["n_low_conf_assumptions"] > 0))
+
+    return {
+        "n_papers":     n,
+        "compiled_at":  datetime.now(timezone.utc).isoformat(),
+
+        "domain_distribution":    dict(domains.most_common()),
+        "optimizer_distribution": dict(optimizers.most_common()),
+        "lr_schedule_distribution": dict(schedules.most_common()),
+
+        "top_metrics":  dict(all_metrics.most_common(10)),
+        "top_datasets": dict(all_datasets.most_common(10)),
+
+        "confidence": {
+            "average":           round(sum(conf_vals) / len(conf_vals), 4) if conf_vals else None,
+            "tier_distribution": dict(conf_tiers),
+            "min":               round(min(conf_vals), 4) if conf_vals else None,
+            "max":               round(max(conf_vals), 4) if conf_vals else None,
+        },
+
+        "architecture": {
+            "avg_modules_per_paper": round(sum(mod_counts) / len(mod_counts), 1) if mod_counts else None,
+        },
+
+        "assumptions": {
+            "avg_per_paper":                    round(sum(ass_counts) / len(ass_counts), 1) if ass_counts else None,
+            "papers_with_low_conf_assumptions": needs_review,
+        },
+
+        "special": {
+            "papers_with_evolution_loop": [r["paper_id"] for r in records if r.get("has_evolution_loop")],
+        },
+    }
+
+
+# ============================================================
+# 6. OUTPUT
+# ============================================================
+
+def write_json(path: Path, data: dict) -> None:
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, default=str)
+
+
+def print_summary(stats: dict, matrix_info: dict | None, out_dir: Path) -> None:
+    print("\n" + "═" * 60)
+    print("  ArXivist SIR Compiler — complete")
+    print("═" * 60)
+    print(f"  Papers compiled:     {stats['n_papers']}")
+    print(f"  Avg confidence:      {stats['confidence']['average']}")
+    print(f"  Domain breakdown:    {dict(list(stats['domain_distribution'].items())[:4])}")
+    print(f"  Top optimizer:       {next(iter(stats['optimizer_distribution']), '?')}")
+    print(f"  Top metrics:         {', '.join(list(stats['top_metrics'].keys())[:4])}")
+    print(f"  Top datasets:        {', '.join(list(stats['top_datasets'].keys())[:3])}")
+
+    if matrix_info:
+        print(f"  Similarity pairs:    {matrix_info['n_pairs_computed']}  (method: {matrix_info['method']})")
+
+    needs = stats["assumptions"]["papers_with_low_conf_assumptions"]
+    if needs:
+        print(f"\n  ⚠  {len(needs)} paper(s) have low-confidence assumptions:")
+        for pid in needs[:5]:
+            print(f"     - {pid}")
+        if len(needs) > 5:
+            print(f"     ... and {len(needs)-5} more")
+
+    print(f"\n  Output written to: {out_dir}")
+    print(f"    compiled_index.json")
+    if matrix_info:
+        print(f"    similarity_matrix.json")
+    print(f"    registry_stats.json")
+    print("═" * 60 + "\n")
+
+
+# ============================================================
+# 7. CLI
+# ============================================================
+
+def main() -> None:
+    p = argparse.ArgumentParser(description="ArXivist SIR Compiler")
+    p.add_argument("--registry-dir", default="../../workspace/sir-registry/")
+    p.add_argument("--sir-diff", default=None,
+                   help="Explicit path to sir_diff.py (e.g. ../diff/sir_diff.py)")
+    p.add_argument("--no-matrix", action="store_true")
+    p.add_argument("--verbose", "-v", action="store_true")
+    args = p.parse_args()
+
+    registry_dir = Path(args.registry_dir).resolve()
+    if not registry_dir.exists():
+        print(f"Error: registry directory not found: {registry_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    t0 = time.time()
+    print(f"\nArXivist SIR Compiler")
+    print(f"Registry: {registry_dir}\n")
+
+    print("Loading SIRs...")
+    sirs = load_registry(registry_dir, verbose=args.verbose)
+    if not sirs:
+        print("No SIRs found.")
+        sys.exit(1)
+    print(f"  {len(sirs)} SIRs loaded in {time.time()-t0:.1f}s")
+
+    print("\nFlattening records...")
+    flat_records = []
+    for sir in sirs:
+        try:
+            flat_records.append(flatten_sir(sir))
+        except Exception as e:
+            print(f"  Warning: flatten failed for {sir.get('paper_id', '?')}: {e}")
+    print(f"  {len(flat_records)} records flattened")
+
+    compiled_index = {
+        "compiled_at": datetime.now(timezone.utc).isoformat(),
+        "n_papers":    len(flat_records),
+        "registry_dir": str(registry_dir),
+        "papers":      flat_records,
+    }
+    write_json(registry_dir / "compiled_index.json", compiled_index)
+    print(f"  compiled_index.json written")
+
+    matrix_info = None
+    if not args.no_matrix:
+        print(f"\nComputing similarity matrix ({len(sirs)}×{len(sirs)})...")
+        matrix_data = build_similarity_matrix(sirs, verbose=args.verbose, sir_diff_path=args.sir_diff)
+        matrix_info = matrix_data
+        write_json(registry_dir / "similarity_matrix.json", matrix_data)
+        print(f"  similarity_matrix.json written ({matrix_data['n_pairs_computed']} pairs)")
+    else:
+        print("\nSimilarity matrix skipped (--no-matrix)")
+
+    print("\nComputing registry statistics...")
+    stats = compute_stats(flat_records)
+    write_json(registry_dir / "registry_stats.json", stats)
+    print(f"  registry_stats.json written")
+
+    print_summary(stats, matrix_info, registry_dir)
+
+
+if __name__ == "__main__":
+    main()
 from __future__ import annotations
 
 import argparse
