@@ -1,0 +1,70 @@
+# =============================================================================
+# Dissecting Characteristics Nonparametrically — Freyberger, Neuhierl, Weber (2017)
+# NBER Working Paper 23227
+# =============================================================================
+
+model:
+  n_knots: 14              # Number of interior knots L; primary in-sample spec (conf: 0.99)
+                           # Paper uses 4, 9, 14, 19 — 14 is baseline in Table 4
+  n_characteristics: 36   # Total candidate characteristics (conf: 0.99)
+
+lasso:
+  # Lambda grid for BIC-based lambda selection (Yuan & Lin 2006)
+  # ASSUMED: grid range — paper only states BIC selection (conf: 0.88)
+  lambda1_grid:
+    - 0.0001
+    - 0.001
+    - 0.01
+    - 0.1
+    - 1.0
+    - 10.0
+    - 100.0
+  lambda2_grid:
+    - 0.0001
+    - 0.001
+    - 0.01
+    - 0.1
+    - 1.0
+    - 10.0
+    - 100.0
+  bic_criterion: "yuan_lin_2006"   # Reference: Yuan & Lin (2006), JRSS-B
+
+estimation:
+  rolling_window_months: 120    # 10-year estimation window (conf: 0.99)
+  hedge_decile: 0.10            # Long top 10%, short bottom 10% (conf: 0.99)
+  weighting: "equal"            # "equal" or "value" (conf: 0.99)
+  n_confidence_sims: 10000      # ASSUMED: simulation draws for critical values (conf: 0.65)
+  # TODO: verify n_confidence_sims — paper does not specify
+  alpha_bands: 0.05             # Confidence band level (conf: 0.92)
+  annualization_factor: 12      # Monthly returns → annualized (conf: 0.99)
+
+data:
+  # These paths are placeholders — override via CLI --data-dir
+  crsp_path: "data/crsp_monthly.parquet"
+  compustat_path: "data/compustat_annual.parquet"
+  ff3_factors_path: "data/ff3_factors.csv"
+  sample_start: "1963-07"       # July 1963 (conf: 0.99)
+  sample_end: "2015-06"         # June 2015 (conf: 0.99)
+  oos_selection_end: "1990-12"  # Model selection through Dec 1990 (conf: 0.99)
+  oos_start: "1991-01"          # First OOS prediction Jan 1991 (conf: 0.99)
+  min_price: 5.0                # Minimum stock price filter (conf: 0.99)
+  exchanges:                    # Exchange filters (conf: 0.99)
+    - "NYSE"
+    - "AMEX"
+    - "NASDAQ"
+  min_compustat_years: 2        # Anti-survivorship filter (conf: 0.99)
+  share_codes:                  # Common shares only (conf: 0.95)
+    - 10
+    - 11
+
+evaluation:
+  compute_ff3_alpha: true
+  compute_firm_level_r2: true
+  nyse_size_percentiles:        # Size filters for robustness checks (conf: 0.99)
+    - 10
+    - 20
+    - 50
+
+reproducibility:
+  seed: 42                      # ASSUMED: not specified in paper
+  n_jobs: -1                    # Parallel jobs for cross-validation
