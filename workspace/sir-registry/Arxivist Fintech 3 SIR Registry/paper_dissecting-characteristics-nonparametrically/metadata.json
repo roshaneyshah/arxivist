@@ -1,0 +1,14 @@
+{
+  "paper_id": "paper_dissecting-characteristics-nonparametrically",
+  "title": "Dissecting Characteristics Nonparametrically",
+  "authors": ["Joachim Freyberger", "Andreas Neuhierl", "Michael Weber"],
+  "source": "NBER Working Paper 23227, March 2017",
+  "domain": "Quantitative Finance / Econometrics",
+  "sir_version": 1,
+  "sir_path": "sir-registry/paper_dissecting-characteristics-nonparametrically/sir.json",
+  "overall_confidence": 0.90,
+  "human_review_required": false,
+  "pipeline_stage_completed": 1,
+  "created_at": "2026-05-26T00:00:00Z",
+  "tags": ["adaptive-group-lasso", "nonparametric", "asset-pricing", "cross-section", "return-prediction", "splines", "factor-selection"]
+}
