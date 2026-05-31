@@ -1,0 +1,28 @@
+{
+  "paper_id": "paper_deepvol_dilated_causal_convolutions",
+  "paper_title": "DeepVol: volatility forecasting from high-frequency data with dilated causal convolutions",
+  "current_stage": 6,
+  "stages_completed": ["paper_parser", "sir_registry", "architecture_planner", "code_generator", "notebook_generator"],
+  "sir_path": "sir-registry/paper_deepvol_dilated_causal_convolutions/sir.json",
+  "repo_path": "paper-repos/paper_deepvol_dilated_causal_convolutions/",
+  "artifacts": {
+    "sir": "sir-registry/paper_deepvol_dilated_causal_convolutions/sir.json",
+    "architecture_plan": "sir-registry/paper_deepvol_dilated_causal_convolutions/architecture_plan_summary.md",
+    "repo_initialized": true,
+    "notebook_path": "paper-repos/paper_deepvol_dilated_causal_convolutions/notebooks/reproduce_paper_deepvol_dilated_causal_convolutions.ipynb",
+    "comparison_report": null
+  },
+  "confidence_flags": {
+    "architecture": 0.85,
+    "mathematical_spec": 0.92,
+    "tensor_semantics": 0.74,
+    "training_pipeline": 0.93,
+    "evaluation_protocol": 0.96,
+    "implementation_assumptions": 0.75,
+    "overall_sir_confidence": 0.86
+  },
+  "human_review_required": false,
+  "loop_count": 0,
+  "created_at": "2026-05-30T00:00:00Z",
+  "last_updated": "2026-05-30T00:00:00Z"
+}

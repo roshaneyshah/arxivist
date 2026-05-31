@@ -1,0 +1,17 @@
+{
+  "index_version": 1,
+  "total_papers": 1,
+  "papers": [
+    {
+      "paper_id": "paper_deepvol_dilated_causal_convolutions",
+      "title": "DeepVol: volatility forecasting from high-frequency data with dilated causal convolutions",
+      "domain": "Tabular/Financial Time-Series",
+      "sir_version": 1,
+      "sir_confidence": 0.86,
+      "has_repo": true,
+      "has_notebook": true,
+      "has_comparison": false,
+      "last_updated": "2026-05-30T00:00:00Z"
+    }
+  ]
+}

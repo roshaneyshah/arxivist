@@ -1,0 +1,396 @@
+{
+  "paper_id": "paper_deepvol_dilated_causal_convolutions",
+  "version": 1,
+  "provenance": {
+    "title": "DeepVol: volatility forecasting from high-frequency data with dilated causal convolutions",
+    "authors": ["Fernando Moreno-Pino", "Stefan Zohren"],
+    "affiliations": [
+      "Oxford-Man Institute of Quantitative Finance, University of Oxford, Oxford, UK",
+      "Signal Processing and Learning Group, Universidad Carlos III de Madrid, Madrid, Spain",
+      "Machine Learning Research Group, University of Oxford, Oxford, UK"
+    ],
+    "journal": "Quantitative Finance",
+    "year": 2024,
+    "volume": "24",
+    "issue": "8",
+    "pages": "1105-1127",
+    "doi": "10.1080/14697688.2024.2387222",
+    "arxiv_id": null,
+    "abstract": "Volatility forecasts play a central role among equity risk measures. We propose DeepVol, a model based on Dilated Causal Convolutions that uses high-frequency data to forecast day-ahead volatility. Our empirical findings demonstrate that dilated convolutional filters are highly effective at extracting relevant information from intraday financial time-series.",
+    "primary_domain": "Tabular/Financial Time-Series",
+    "key_claims": [
+      "DeepVol uses raw high-frequency intraday data directly, bypassing precomputed realised measures",
+      "Dilated Causal Convolutions (DCC) effectively handle long intraday sequences without proportional parameter growth",
+      "DeepVol outperforms GARCH-family, HEAVY, HAR, ARFIMA, MLP, and LSTM baselines on NASDAQ-100",
+      "Optimal sampling frequency is 5 minutes and optimal receptive field is 1 prior trading day",
+      "DeepVol generalises to out-of-distribution stocks, demonstrating transfer learning capability"
+    ],
+    "parsed_at": "2026-05-30T00:00:00Z"
+  },
+  "architecture": {
+    "confidence": 0.85,
+    "description": "Hierarchical stack of Dilated Causal Convolution (DCC) blocks followed by an attention mechanism and linear output head. Inspired by WaveNet.",
+    "primary_variant": "DeepVol",
+    "variants": [
+      {
+        "name": "DeepVol",
+        "description": "Full model operating on raw high-frequency intraday returns"
+      },
+      {
+        "name": "DeepVol-RM",
+        "description": "Same DCC architecture but takes precomputed realised variance over 22 days as input instead of raw intraday data"
+      }
+    ],
+    "modules": [
+      {
+        "name": "InputProjection",
+        "description": "Projects raw intraday return scalars into residual channel space",
+        "input_shape": "[B, 1, T*J]",
+        "output_shape": "[B, residual_channels, T*J]",
+        "operation": "Conv1d with kernel_size=1",
+        "confidence": 0.75,
+        "note": "Input layout (concatenated days) inferred from rolling-window description; exact 1D vs 2D layout assumed"
+      },
+      {
+        "name": "DilatedCausalConvBlock",
+        "description": "Single WaveNet-style residual block: dilated causal conv → gated activation → 1x1 conv → residual + skip",
+        "input_shape": "[B, residual_channels, L]",
+        "output_shape": "[B, residual_channels, L] (residual), [B, skip_channels, L] (skip)",
+        "operation": "DilatedCausalConv1d + gated tanh + residual/skip projections",
+        "confidence": 0.88,
+        "dilation_schedule": "d = 2^l for layer l within a block; blocks repeat the schedule",
+        "num_blocks": 2,
+        "num_layers_per_block": 6
+      },
+      {
+        "name": "SkipAggregation",
+        "description": "Sums all skip connection outputs across all layers and blocks",
+        "input_shape": "list of [B, skip_channels, L]",
+        "output_shape": "[B, skip_channels, L]",
+        "operation": "Element-wise sum",
+        "confidence": 0.80
+      },
+      {
+        "name": "AttentionMechanism",
+        "description": "Bahdanau-style additive attention over the time dimension to weight each time-step's importance",
+        "input_shape": "[B, skip_channels, L]",
+        "output_shape": "[B, skip_channels]",
+        "operation": "Additive attention (Bahdanau et al. 2014) — NOT self-attention/Transformer",
+        "confidence": 0.78,
+        "note": "Paper explicitly says classic Bahdanau attention, not self-attention"
+      },
+      {
+        "name": "OutputHead",
+        "description": "Two linear layers with ReLU to project attended representation to scalar volatility forecast",
+        "input_shape": "[B, skip_channels]",
+        "output_shape": "[B, 1]",
+        "operation": "Linear → ReLU → Linear → scalar",
+        "confidence": 0.70,
+        "note": "Equation 27 shows weighted sum of ReLU-activated convolution outputs; exact MLP structure inferred"
+      }
+    ],
+    "connections": [
+      "raw_returns → InputProjection → DilatedCausalConvBlock[0..L] → SkipAggregation → AttentionMechanism → OutputHead → sigma2_forecast"
+    ],
+    "ambiguities": [
+      {
+        "location": "Section 4.2, Eq. 27",
+        "description": "Exact architecture of output head beyond 'weights applied to convolutional operations' is not fully specified",
+        "primary_assumption": "Two-layer MLP with ReLU following skip aggregation and attention",
+        "alternatives": ["Single linear layer", "Three-layer MLP"],
+        "confidence": 0.65
+      },
+      {
+        "location": "Section 4.2",
+        "description": "Whether input is flattened T*J sequence or structured as 2D [T, J] and then reshaped",
+        "primary_assumption": "Flattened 1D sequence of length T*J fed to DCC stack",
+        "alternatives": ["2D input with day dimension handled separately"],
+        "confidence": 0.70
+      }
+    ]
+  },
+  "mathematical_spec": {
+    "confidence": 0.92,
+    "equations": [
+      {
+        "id": "eq1",
+        "name": "Intraday Return",
+        "latex": "r_{i,t} = \\log\\frac{p_{i,t}}{p_{i-1,t}}",
+        "role": "preprocessing / data preparation",
+        "variables": {"p_{i,t}": "last price in ith interval on day t", "r_{i,t}": "return over interval i on day t"},
+        "confidence": 0.99
+      },
+      {
+        "id": "eq2",
+        "name": "Realised Variance",
+        "latex": "RV_t = \\sum_{i=1}^{I} r_{i,t}^2",
+        "role": "target proxy measure / baseline input feature",
+        "variables": {"r_{i,t}": "ith intraday return for day t", "I": "number of intraday intervals"},
+        "confidence": 0.99
+      },
+      {
+        "id": "eq3",
+        "name": "GARCH(p,q) process",
+        "latex": "\\sigma_t^2 = \\omega + \\sum_{i=1}^{p} \\alpha_i \\varepsilon_{t-i}^2 + \\sum_{j=1}^{q} \\beta_j \\sigma_{t-j}^2",
+        "role": "baseline model",
+        "confidence": 0.99
+      },
+      {
+        "id": "eq24",
+        "name": "Dilated Causal Convolution (first layer)",
+        "latex": "F^{(l=1)}(t) = (x *_d k^{(l=1)})(t) = \\sum_{\\tau=0}^{s-1} k^{(l=1)}_\\tau \\cdot x_{t - d\\tau}",
+        "role": "core model operation — forward pass",
+        "variables": {"d": "dilation factor", "k": "convolutional filter", "s": "filter size (kernel size)", "x": "input sequence"},
+        "hyperparameters": ["d", "s"],
+        "confidence": 0.98
+      },
+      {
+        "id": "eq25",
+        "name": "Dilated Causal Convolution (layer l)",
+        "latex": "F^{(l)}(t) = (F^{(l-1)} *_d k^{(l)})(t) = \\sum_{\\tau=0}^{s-1} k^{(l)}_\\tau \\cdot F^{(l-1)}_{t-d\\tau}(t)",
+        "role": "core model operation — hierarchical stacking",
+        "confidence": 0.98
+      },
+      {
+        "id": "eq27",
+        "name": "DeepVol Full Forward Pass",
+        "latex": "\\sigma^2_{T+1}(\\{r^{1:J}_t\\}_{t=1}^T) = \\alpha_0 + \\sum_{l=1}^{L} \\alpha_l \\cdot \\sigma_{\\text{ReLU}}(F^{(l)}(\\{r^{1:J}_t\\}_{t=1}^T))",
+        "role": "full model forward pass",
+        "variables": {"alpha_l": "learnable weight for layer l output", "sigma_ReLU": "ReLU non-linearity", "T": "receptive field (number of past days)"},
+        "confidence": 0.90
+      },
+      {
+        "id": "eq_objective",
+        "name": "Optimisation Objective",
+        "latex": "\\hat{\\theta} = \\arg\\min_{\\theta \\in \\Theta} \\mathcal{L}(f_\\theta(\\cdot), \\sigma^2_t(\\cdot))",
+        "role": "training objective",
+        "confidence": 0.99
+      },
+      {
+        "id": "eq_qlike",
+        "name": "QLIKE Loss",
+        "latex": "\\text{QLIKE}(\\sigma^2_t, \\hat{\\sigma}^2_t) = \\frac{1}{T} \\sum_{t=1}^T \\left[\\log \\hat{\\sigma}^2_t + \\frac{\\sigma^2_t}{\\hat{\\sigma}^2_t}\\right]",
+        "role": "primary training loss and evaluation metric",
+        "confidence": 0.99
+      },
+      {
+        "id": "eq_mae",
+        "name": "MAE",
+        "latex": "\\text{MAE}(\\sigma^2_t, \\hat{\\sigma}^2_t) = \\frac{1}{T} \\sum_{t=1}^T |\\sigma^2_t - \\hat{\\sigma}^2_t|",
+        "role": "evaluation metric",
+        "confidence": 0.99
+      },
+      {
+        "id": "eq_rmse",
+        "name": "RMSE",
+        "latex": "\\text{RMSE}(\\sigma^2_t, \\hat{\\sigma}^2_t) = \\sqrt{\\frac{1}{T} \\sum_{t=1}^T (\\sigma^2_t - \\hat{\\sigma}^2_t)^2}",
+        "role": "evaluation metric",
+        "confidence": 0.99
+      },
+      {
+        "id": "eq_smape",
+        "name": "SMAPE",
+        "latex": "\\text{SMAPE}(\\sigma^2_t, \\hat{\\sigma}^2_t) = \\frac{1}{T} \\sum_{t=1}^T \\frac{|\\sigma^2_t - \\hat{\\sigma}^2_t|}{(\\sigma^2_t + \\hat{\\sigma}^2_t)/2}",
+        "role": "evaluation metric",
+        "confidence": 0.99
+      }
+    ]
+  },
+  "tensor_semantics": {
+    "confidence": 0.74,
+    "tensors": [
+      {
+        "name": "raw_returns",
+        "shape": "[B, 1, T*J]",
+        "dtype": "float32",
+        "role": "input",
+        "description": "Concatenated intraday returns over T past days, J intraday intervals per day (J=78 at 5-min freq for 6.5hr trading day)"
+      },
+      {
+        "name": "projected_input",
+        "shape": "[B, residual_channels, T*J]",
+        "dtype": "float32",
+        "role": "intermediate"
+      },
+      {
+        "name": "skip_sum",
+        "shape": "[B, skip_channels, T*J]",
+        "dtype": "float32",
+        "role": "intermediate"
+      },
+      {
+        "name": "attended_context",
+        "shape": "[B, skip_channels]",
+        "dtype": "float32",
+        "role": "intermediate",
+        "description": "After Bahdanau attention collapses the time dimension"
+      },
+      {
+        "name": "volatility_forecast",
+        "shape": "[B, 1]",
+        "dtype": "float32",
+        "role": "output",
+        "description": "Day-ahead realised variance forecast sigma^2_{T+1}"
+      },
+      {
+        "name": "realised_variance_target",
+        "shape": "[B, 1]",
+        "dtype": "float32",
+        "role": "target/label",
+        "description": "Realised variance computed via Eq. 2 at 5-min frequency"
+      }
+    ],
+    "notes": "J=78 for 5-min data (390 min / 5 = 78 intervals). T=1 (receptive field of 1 day) for optimal model."
+  },
+  "training_pipeline": {
+    "confidence": 0.93,
+    "optimizer": {
+      "name": "Adam",
+      "learning_rate": 0.001,
+      "betas": [0.9, 0.999],
+      "epsilon": 1e-8,
+      "weight_decay": null,
+      "note": "Adam (Kingma & Ba 2014). Weight decay not specified — assumed 0."
+    },
+    "lr_schedule": null,
+    "batch_size": 512,
+    "num_epochs": 1000,
+    "early_stopping": {
+      "patience": 50,
+      "monitor": "validation_loss"
+    },
+    "loss_function": "QLIKE",
+    "mixed_precision": null,
+    "gradient_clipping": null,
+    "framework": "PyTorch-Lightning",
+    "hardware": "NVIDIA Titan Xp GPU (single GPU)",
+    "data_splits": {
+      "train": "Sep 30, 2019 to Sep 30, 2020 (12 months)",
+      "validation": "Oct 1, 2020 to Dec 31, 2020 (3 months)",
+      "test": "Jan 1, 2021 to Sep 30, 2021 (9 months)"
+    },
+    "data_assets": {
+      "dataset": "NASDAQ-100 high-frequency intraday data",
+      "tickers": "~90 NASDAQ-100 constituent stocks (see Table A1/A2)",
+      "sampling_frequencies": ["1min", "5min", "15min", "30min", "60min"],
+      "optimal_frequency": "5min",
+      "overnight_data": "excluded — only regular trading hours",
+      "source": "Proprietary/commercial — not publicly available"
+    }
+  },
+  "evaluation_protocol": {
+    "confidence": 0.96,
+    "datasets": [
+      {
+        "name": "NASDAQ-100",
+        "split": "test",
+        "period": "Jan 1, 2021 to Sep 30, 2021",
+        "description": "Standard out-of-sample forecast"
+      },
+      {
+        "name": "NASDAQ-100 Out-of-Distribution Stocks",
+        "split": "cross-sectional test",
+        "period": "Feb 1, 2020 to Sep 30, 2021",
+        "description": "Train on half the tickers, test on unseen tickers (includes COVID volatility shock)"
+      }
+    ],
+    "metrics": ["MAE", "RMSE", "SMAPE", "QLIKE", "ME", "MedAE"],
+    "statistical_tests": ["Model Confidence Set (MCS) at 5% significance level"],
+    "reported_results": {
+      "out_of_sample_forecast": {
+        "DeepVol": {"MAE": 3.903, "RMSE": 8.457, "SMAPE": 0.279, "QLIKE": 340.779, "ME": 71.779, "MedAE": 2.008},
+        "HEAVY": {"MAE": 4.565, "RMSE": 10.239, "SMAPE": 0.292, "QLIKE": 343.490, "ME": 72.404, "MedAE": 2.545},
+        "LSTM": {"MAE": 4.441, "RMSE": 10.032, "SMAPE": 0.295, "QLIKE": 345.465, "ME": 72.650, "MedAE": 2.570},
+        "HAR": {"MAE": 4.587, "RMSE": 10.306, "SMAPE": 0.293, "QLIKE": 343.652, "ME": 72.116, "MedAE": 2.451},
+        "martingale": {"MAE": 5.180, "RMSE": 11.410, "SMAPE": 0.324, "QLIKE": 747.480, "ME": 96.654, "MedAE": 1.614}
+      },
+      "out_of_distribution_stocks": {
+        "DeepVol": {"MAE": 7.288, "RMSE": 23.396, "SMAPE": 0.292, "QLIKE": 894.283, "ME": 275.255, "MedAE": 1.927},
+        "HEAVY": {"MAE": 8.315, "RMSE": 26.322, "SMAPE": 0.294, "QLIKE": 874.409, "ME": 277.780, "MedAE": 2.158}
+      }
+    },
+    "baselines": ["martingale", "TARCH", "IGARCH", "FIGARCH", "APARCH", "AGARCH", "EGARCH", "HEAVY", "Real-GARCH", "Real-EGARCH", "ARFIMA", "HAR", "MLP", "LSTM", "DeepVol-RM"]
+  },
+  "implementation_assumptions": [
+    {
+      "assumption": "Gated activation in DCC blocks uses tanh * sigmoid (WaveNet-style), not plain ReLU",
+      "basis": "Standard WaveNet architecture; paper cites Oord et al. 2016 as inspiration",
+      "confidence": 0.78,
+      "alternatives": ["plain ReLU", "GELU"]
+    },
+    {
+      "assumption": "Input is a 1D sequence of length T*J (78 for 5-min, 1-day receptive field) after flattening intraday intervals",
+      "basis": "DCC operates on sequences; rolling-window approach described in Section 2.1.2",
+      "confidence": 0.72,
+      "alternatives": ["2D input with day/interval axes treated separately"]
+    },
+    {
+      "assumption": "Weight decay = 0 for Adam optimizer",
+      "basis": "Not mentioned in paper; standard default",
+      "confidence": 0.80,
+      "alternatives": ["1e-4", "1e-5"]
+    },
+    {
+      "assumption": "Kernel size = 3 across all DCC layers (explicitly stated in Table 1)",
+      "basis": "Explicitly listed in hyperparameter table",
+      "confidence": 0.99,
+      "alternatives": []
+    },
+    {
+      "assumption": "Dilation factor doubles per layer: d = 2^l for l in 0..5 within each block (6 layers, 2 blocks)",
+      "basis": "Standard WaveNet dilation schedule; paper describes exponential increase in receptive field",
+      "confidence": 0.83,
+      "alternatives": ["Linear dilation", "d = 2^(l mod num_layers)"]
+    },
+    {
+      "assumption": "Residual channels=32, dilation channels=64, skip channels=128, end channels=64 as per Table 1",
+      "basis": "Explicitly stated in Table 1",
+      "confidence": 0.99,
+      "alternatives": []
+    },
+    {
+      "assumption": "Data normalisation: returns are used as-is (log returns are approximately zero-mean); no explicit normalisation layer mentioned",
+      "basis": "Section 2.1 describes log return calculation; no normalisation mentioned",
+      "confidence": 0.65,
+      "alternatives": ["Z-score normalisation per asset", "MinMax normalisation"]
+    },
+    {
+      "assumption": "Multi-asset training: all NASDAQ-100 tickers are concatenated and treated as a single dataset (global model)",
+      "basis": "Paper describes training on all NASDAQ-100 tickers with shared parameters",
+      "confidence": 0.88,
+      "alternatives": ["Per-asset model", "Asset embedding appended to input"]
+    }
+  ],
+  "confidence_annotations": {
+    "architecture": 0.85,
+    "mathematical_spec": 0.92,
+    "tensor_semantics": 0.74,
+    "training_pipeline": 0.93,
+    "evaluation_protocol": 0.96,
+    "implementation_assumptions": 0.75,
+    "overall_sir_confidence": 0.86
+  },
+  "ambiguities": [
+    {
+      "location": "Section 4.2, Eq. 27",
+      "description": "Exact output head architecture beyond weighted ReLU sum not fully described",
+      "primary_assumption": "Two-layer MLP with ReLU after skip aggregation and attention pooling",
+      "alternatives": ["Single linear output", "Three-layer MLP"],
+      "confidence": 0.65
+    },
+    {
+      "location": "Section 4.2",
+      "description": "Whether attention is applied before or after skip connection summation",
+      "primary_assumption": "Attention applied after skip sum, operating over the temporal dimension",
+      "alternatives": ["Per-layer attention before skip sum"],
+      "confidence": 0.70
+    },
+    {
+      "location": "Section 2",
+      "description": "Exact number of NASDAQ-100 tickers used (index composition varies); Tables A1/A2 list ~90 stocks",
+      "primary_assumption": "90 stocks as listed in Table A1",
+      "alternatives": ["Full 100-stock index"],
+      "confidence": 0.90
+    }
+  ]
+}
