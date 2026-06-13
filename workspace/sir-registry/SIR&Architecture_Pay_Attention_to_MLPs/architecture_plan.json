@@ -1,0 +1,649 @@
+{
+  "paper_id": "arxiv_2105_08050",
+  "plan_version": 1,
+  "created_at": "2026-06-11T00:00:00Z",
+
+  "framework_selection": {
+    "primary_framework": "PyTorch",
+    "version": ">=2.1.0",
+    "python_version": "3.10+",
+    "cuda_required": true,
+    "cuda_minimum": "11.8",
+    "cudnn_minimum": "8",
+    "huggingface_integration": true,
+    "huggingface_components": ["transformers (tokenizers, BERT data collator)", "datasets (C4, GLUE, SQuAD)"],
+    "config_system": "YAML + dataclass (no Hydra dependency; plain PyYAML + argparse)",
+    "reasoning": "Paper trains on TPU/TF but all major reproductions target PyTorch+GPU. HuggingFace Datasets handles C4/GLUE/SQuAD access cleanly. HuggingFace Tokenizers provides the SentencePiece 32K tokenizer equivalent. Custom ops (SGU, Toeplitz) are expressible in pure PyTorch without C++ extensions.",
+    "precision": "torch.float32 default; bfloat16 optional via --precision bf16 flag (matches original TPU setup)"
+  },
+
+  "project_structure": {
+    "root": "gmlp/",
+    "layout": {
+      "gmlp/": {
+        "__init__.py": "Package root, exports gMLP, aMLP, gMLPConfig",
+        "models/": {
+          "__init__.py": "Exports all model classes",
+          "sgu.py": "SpatialGatingUnit, aMLP_SGU (hybrid with tiny attention)",
+          "gmlp_block.py": "gMLPBlock (one residual block)",
+          "gmlp.py": "gMLP top-level model (NLP and Vision variants)",
+          "tiny_attn.py": "TinyAttention module (aMLP only)",
+          "patch_embed.py": "PatchEmbedding for vision (ViT-style 16x16 patch stem)",
+          "toeplitz.py": "ToeplitzLinear — parameterizes W as 2n-1 vector with circulant construction"
+        },
+        "data/": {
+          "__init__.py": "",
+          "mlm_dataset.py": "MLMDataset — wraps HuggingFace C4, applies BERT-style 15% masking",
+          "glue_dataset.py": "GLUEDataset — SST-2 / MNLI via HuggingFace datasets",
+          "squad_dataset.py": "SQuADDataset — SQuAD v1.1 and v2.0",
+          "imagenet_dataset.py": "ImageNetDataset — torchvision ImageFolder + augmentation pipeline",
+          "transforms.py": "AutoAugment, Mixup, CutMix, CutMixMixupSwitch for vision"
+        },
+        "training/": {
+          "__init__.py": "",
+          "trainer_nlp.py": "NLPTrainer — MLM pretraining loop; AdamW, linear LR, gradient clipping",
+          "trainer_vision.py": "VisionTrainer — ImageNet loop; AdamW, cosine LR, stochastic depth control",
+          "finetuner.py": "NLPFinetuner — SST-2/MNLI classification head + SQuAD QA head",
+          "lr_schedulers.py": "LinearWarmupDecay, CosineWarmupDecay",
+          "losses.py": "MLMLoss (cross-entropy on masked tokens), ClassificationLoss, QALoss (span extraction)"
+        },
+        "evaluation/": {
+          "__init__.py": "",
+          "metrics.py": "compute_perplexity, compute_accuracy, compute_f1_squad, compute_mnli_accuracy",
+          "evaluator.py": "Evaluator class — wraps metrics, handles median-of-N-runs aggregation"
+        },
+        "utils/": {
+          "__init__.py": "",
+          "config.py": "gMLPConfig dataclass — all model + training hyperparameters with defaults",
+          "checkpointing.py": "save_checkpoint, load_checkpoint, resume logic",
+          "logging_utils.py": "setup_logger, TensorBoard/W&B optional integration",
+          "distributed.py": "DDP setup helpers (init_process_group, gather_tensor)"
+        }
+      },
+      "configs/": {
+        "gmlp_base_mlm.yaml": "gMLPbase NLP pretraining config",
+        "gmlp_large_mlm.yaml": "gMLPlarge NLP pretraining config",
+        "amlp_base_mlm.yaml": "aMLPbase NLP pretraining config",
+        "gmlp_s_imagenet.yaml": "gMLP-S ImageNet config",
+        "gmlp_b_imagenet.yaml": "gMLP-B ImageNet config",
+        "finetune_sst2.yaml": "SST-2 finetuning config",
+        "finetune_mnli.yaml": "MNLI finetuning config",
+        "finetune_squad.yaml": "SQuAD finetuning config"
+      },
+      "docker/": {
+        "Dockerfile": "Full runtime container",
+        "docker-compose.yml": "Multi-GPU training convenience wrapper"
+      },
+      "data/": {
+        "download_c4.sh": "HuggingFace datasets download script for C4",
+        "download_imagenet.sh": "ImageNet download and validation split setup"
+      },
+      "train.py": "Main training entrypoint (NLP pretraining)",
+      "train_vision.py": "ImageNet training entrypoint",
+      "finetune.py": "NLP finetuning entrypoint (GLUE + SQuAD)",
+      "evaluate.py": "Standalone evaluation entrypoint",
+      "inference.py": "Single-example inference demo",
+      "requirements.txt": "Pinned runtime dependencies",
+      "requirements-dev.txt": "Dev/test dependencies",
+      "environment.yaml": "Conda environment spec",
+      "README.md": "Repo documentation"
+    }
+  },
+
+  "module_specs": [
+    {
+      "file": "gmlp/models/toeplitz.py",
+      "classes": [
+        {
+          "name": "ToeplitzLinear",
+          "sir_mapping": "eq6 (Toeplitz W), architecture.toeplitz_constraint",
+          "description": "Parameterizes spatial weight matrix W as a single vector w ∈ R^{2n-1}. At forward time constructs the full [n,n] Toeplitz matrix via circulant padding+reshape. Optionally falls back to unconstrained [n,n] parameter (for vision).",
+          "init_args": "n: int, use_toeplitz: bool=True",
+          "public_methods": {
+            "forward": "(z: Tensor[B,n,e]) -> Tensor[B,n,e]  — apply W @ z + b along spatial dim",
+            "get_weight_matrix": "() -> Tensor[n,n]  — for visualization"
+          },
+          "init_strategy": "w init near-zero (std=0.002); b init ones",
+          "confidence": 0.80,
+          "note": "W std value is assumed (ambiguity_002). Implement with configurable std parameter."
+        }
+      ]
+    },
+    {
+      "file": "gmlp/models/tiny_attn.py",
+      "classes": [
+        {
+          "name": "TinyAttention",
+          "sir_mapping": "architecture.modules[2] (Tiny_Attn), eq7",
+          "description": "Single-head scaled dot-product attention. Takes pre-block normalized input X (not the split Z2). Projects to QKV of size d_attn each, computes attention, projects output back to d_out.",
+          "init_args": "d_model: int, d_attn: int=64, d_out: int=None",
+          "public_methods": {
+            "forward": "(x: Tensor[B,n,d_model]) -> Tensor[B,n,d_out]"
+          },
+          "confidence": 0.95
+        }
+      ]
+    },
+    {
+      "file": "gmlp/models/sgu.py",
+      "classes": [
+        {
+          "name": "SpatialGatingUnit",
+          "sir_mapping": "architecture.modules[1] (SGU), eq4",
+          "description": "Core gMLP spatial interaction module. Splits input Z into Z1 (gate bypass) and Z2 (spatial branch). Applies LayerNorm → ToeplitzLinear (or dense) → elementwise multiply with Z1.",
+          "init_args": "d_ffn: int, seq_len: int, use_toeplitz: bool=True, w_init_std: float=0.002",
+          "public_methods": {
+            "forward": "(z: Tensor[B,n,d_ffn]) -> Tensor[B,n,d_ffn//2]"
+          },
+          "forward_steps": [
+            "z1, z2 = split(z, d_ffn//2, dim=-1)   # [B,n,d_ffn/2] each",
+            "z2 = LayerNorm(z2)                      # channel-wise norm",
+            "z2 = toeplitz_linear(z2)                # [B,n,d_ffn/2] spatial mix",
+            "return z1 * z2                          # [B,n,d_ffn/2] gated output"
+          ],
+          "confidence": 0.97
+        },
+        {
+          "name": "aMLP_SGU",
+          "sir_mapping": "architecture.modules[3] (aMLP_SGU), ambiguity_001",
+          "description": "Hybrid SGU for aMLP. Spatial gate = ToeplitzLinear(Z2) + TinyAttention(X_pre). Uses configurable fusion_mode ('add' default per ambiguity_001 resolution).",
+          "init_args": "d_ffn: int, d_model: int, seq_len: int, d_attn: int=64, fusion_mode: str='add'",
+          "public_methods": {
+            "forward": "(z: Tensor[B,n,d_ffn], x_pre: Tensor[B,n,d_model]) -> Tensor[B,n,d_ffn//2]"
+          },
+          "forward_steps": [
+            "z1, z2 = split(z, d_ffn//2, dim=-1)",
+            "z2 = LayerNorm(z2)",
+            "spatial_gate = toeplitz_linear(z2)       # [B,n,d_ffn/2]",
+            "attn_gate = tiny_attn(x_pre)             # [B,n,d_ffn/2]  ← x_pre is pre-block norm output",
+            "gate = spatial_gate + attn_gate           # fusion_mode='add' (TODO: verify from paper)",
+            "return z1 * gate"
+          ],
+          "confidence": 0.75,
+          "note": "fusion_mode should be configurable; 'add' is primary assumption per ambiguity_001"
+        }
+      ]
+    },
+    {
+      "file": "gmlp/models/gmlp_block.py",
+      "classes": [
+        {
+          "name": "gMLPBlock",
+          "sir_mapping": "architecture.modules[0] (gMLP_Block), eq1",
+          "description": "One gMLP residual block. LayerNorm → expand → GeLU → SGU (or aMLP_SGU) → contract → residual add. Used for both NLP and vision.",
+          "init_args": "d_model: int, d_ffn: int, seq_len: int, use_toeplitz: bool=True, use_tiny_attn: bool=False, d_attn: int=64, w_init_std: float=0.002, survival_prob: float=1.0",
+          "public_methods": {
+            "forward": "(x: Tensor[B,n,d_model]) -> Tensor[B,n,d_model]"
+          },
+          "forward_steps": [
+            "shortcut = x",
+            "x_pre = LayerNorm(x)                          # [B,n,d_model] pre-block norm",
+            "x = Linear_expand(x_pre, d_ffn)               # U: [B,n,d_ffn]",
+            "x = GeLU(x)",
+            "if use_tiny_attn:",
+            "    x = amlp_sgu(x, x_pre)                   # [B,n,d_ffn//2]",
+            "else:",
+            "    x = sgu(x)                               # [B,n,d_ffn//2]",
+            "x = Linear_contract(x, d_model)               # V: [B,n,d_model]",
+            "x = stochastic_depth(x, survival_prob)        # training only, vision only",
+            "return x + shortcut"
+          ],
+          "confidence": 0.97
+        }
+      ]
+    },
+    {
+      "file": "gmlp/models/patch_embed.py",
+      "classes": [
+        {
+          "name": "PatchEmbedding",
+          "sir_mapping": "architecture.input_protocols.Vision",
+          "description": "ViT-style 16×16 non-overlapping patch embedding. Conv2d(3, d_model, kernel=16, stride=16) → flatten spatial dims → [B, num_patches, d_model]. No positional encoding added.",
+          "init_args": "img_size: int=224, patch_size: int=16, in_channels: int=3, d_model: int",
+          "public_methods": {
+            "forward": "(x: Tensor[B,3,H,W]) -> Tensor[B,num_patches,d_model]  where num_patches=(H/16)*(W/16)"
+          },
+          "confidence": 0.93
+        }
+      ]
+    },
+    {
+      "file": "gmlp/models/gmlp.py",
+      "classes": [
+        {
+          "name": "gMLP",
+          "sir_mapping": "architecture.primary_model, all model_sizes",
+          "description": "Top-level model. Dispatches to NLP or Vision mode. NLP: token embedding → L × gMLPBlock → LM head or CLS head. Vision: PatchEmbedding → L × gMLPBlock → global avg pool → classifier.",
+          "init_args": "config: gMLPConfig",
+          "public_methods": {
+            "forward": "(input_ids: Tensor[B,n] OR pixel_values: Tensor[B,3,H,W], attention_mask: Optional[Tensor]=None, labels: Optional[Tensor]=None) -> ModelOutput",
+            "get_num_params": "() -> int",
+            "from_pretrained": "(path: str) -> gMLP  (classmethod)"
+          },
+          "forward_steps_nlp": [
+            "x = token_embedding(input_ids)                # [B,n,d_model]",
+            "for block in self.blocks:",
+            "    x = block(x)                             # [B,n,d_model]",
+            "x = LayerNorm(x)                             # final norm",
+            "if task == 'mlm':",
+            "    logits = lm_head(x)                      # [B,n,vocab_size]",
+            "elif task == 'classification':",
+            "    pooled = x[:, 0, :]                      # CLS token [B,d_model]",
+            "    logits = classifier(pooled)              # [B,num_classes]"
+          ],
+          "forward_steps_vision": [
+            "x = patch_embedding(pixel_values)            # [B,num_patches,d_model]",
+            "for block in self.blocks:",
+            "    x = block(x)                             # [B,num_patches,d_model]",
+            "x = LayerNorm(x)",
+            "x = x.mean(dim=1)                            # global avg pool [B,d_model]  (ambiguity_003)",
+            "logits = classifier(x)                       # [B,num_classes]"
+          ],
+          "confidence": 0.92,
+          "note_pooling": "Global avg pool assumed per ambiguity_003 (confidence 0.70). Implement with config flag allow_cls_pool=True as fallback."
+        }
+      ]
+    },
+    {
+      "file": "gmlp/utils/config.py",
+      "classes": [
+        {
+          "name": "gMLPConfig",
+          "description": "Central dataclass holding all model and training hyperparameters. Serializable to/from YAML.",
+          "fields": [
+            "model_type: str  # 'nlp' or 'vision'",
+            "use_tiny_attn: bool  # False=gMLP, True=aMLP",
+            "num_layers: int",
+            "d_model: int",
+            "d_ffn: int",
+            "seq_len: int",
+            "vocab_size: int  # NLP only",
+            "num_classes: int",
+            "img_size: int  # Vision only",
+            "patch_size: int  # Vision only",
+            "use_toeplitz: bool",
+            "d_attn: int  # aMLP only",
+            "w_init_std: float  # ASSUMED 0.002",
+            "attn_fusion_mode: str  # ASSUMED 'add'",
+            "pool_mode: str  # ASSUMED 'avg' (vision)",
+            "survival_prob: float  # stochastic depth (vision)",
+            "optimizer: str",
+            "lr: float",
+            "weight_decay: float",
+            "beta1: float",
+            "beta2: float",
+            "eps: float",
+            "grad_clip: float",
+            "lr_schedule: str",
+            "warmup_steps: int",
+            "batch_size: int",
+            "num_steps: int",
+            "precision: str",
+            "num_workers: int",
+            "seed: int"
+          ]
+        }
+      ]
+    }
+  ],
+
+  "tensor_flows": [
+    {
+      "name": "gMLP NLP Forward (MLM pretraining)",
+      "path": "input_ids → gMLP → MLM logits",
+      "steps": [
+        "input_ids:          [B, n]              int64        ← tokenized text",
+        "x = embed(input_ids):  [B, n, d_model]  float32      ← token embedding table",
+        "--- repeat L times ---",
+        "  shortcut = x:     [B, n, d_model]",
+        "  x_pre = LN(x):    [B, n, d_model]",
+        "  x = x_pre @ U:    [B, n, d_ffn]                   ← channel expand (U∈[d_model,d_ffn])",
+        "  x = GeLU(x):      [B, n, d_ffn]",
+        "  z1,z2 = split(x): [B, n, d_ffn/2] each",
+        "  z2 = LN(z2):      [B, n, d_ffn/2]",
+        "  z2 = W@z2+b:      [B, n, d_ffn/2]                 ← Toeplitz W∈[n,n], b∈[n]",
+        "  x = z1 * z2:      [B, n, d_ffn/2]                 ← SGU output",
+        "  x = x @ V:        [B, n, d_model]                 ← channel contract (V∈[d_ffn/2,d_model])",
+        "  x = x + shortcut: [B, n, d_model]",
+        "--- end repeat ---",
+        "x = LN(x):          [B, n, d_model]",
+        "logits = x @ E.T:   [B, n, vocab_size]              ← weight-tied LM head",
+        "loss = CE(logits[mask], labels[mask])               ← only on masked positions"
+      ]
+    },
+    {
+      "name": "aMLP NLP Forward (adds tiny attention)",
+      "patch": "Inside each block, after z1,z2 = split(x):",
+      "additional_steps": [
+        "  spatial_gate = W@z2+b:  [B, n, d_ffn/2]          ← same as gMLP",
+        "  q,k,v = x_pre @ Wqkv:  [B, n, d_attn] each       ← project pre-norm input",
+        "  A = softmax(q@k.T/sqrt(d_attn)): [B, n, n]",
+        "  attn_out = A@v:         [B, n, d_attn]",
+        "  attn_gate = attn_out @ Wo: [B, n, d_ffn/2]        ← project to gate size",
+        "  gate = spatial_gate + attn_gate                   ← additive fusion (ambiguity_001)",
+        "  x = z1 * gate:          [B, n, d_ffn/2]"
+      ]
+    },
+    {
+      "name": "gMLP Vision Forward (ImageNet classification)",
+      "steps": [
+        "pixel_values:        [B, 3, 224, 224]  float32",
+        "x = patch_embed(pv): [B, 196, d_model]              ← 196=(224/16)^2 patches",
+        "--- repeat L times ---",
+        "  (same block structure as NLP but W∈R^{196×196}, NOT Toeplitz)",
+        "--- end repeat ---",
+        "x = LN(x):          [B, 196, d_model]",
+        "x = x.mean(dim=1):  [B, d_model]                   ← global average pool (ambiguity_003)",
+        "logits = Linear(x): [B, 1000]                       ← ImageNet 1K classes"
+      ]
+    }
+  ],
+
+  "config_templates": {
+    "gmlp_base_mlm": {
+      "model": {
+        "model_type": "nlp",
+        "use_tiny_attn": false,
+        "num_layers": 48,
+        "d_model": 512,
+        "d_ffn": 3072,
+        "seq_len": 512,
+        "vocab_size": 32000,
+        "num_classes": 32000,
+        "use_toeplitz": true,
+        "d_attn": null,
+        "w_init_std": "0.002  # ASSUMED: paper says near-zero, std not specified (ambiguity_002, conf=0.65)",
+        "attn_fusion_mode": "add  # ASSUMED: additive fusion per Fig6 (ambiguity_001, conf=0.75)",
+        "pool_mode": null
+      },
+      "training": {
+        "optimizer": "adamw",
+        "lr": 1e-4,
+        "weight_decay": 0.01,
+        "beta1": 0.9,
+        "beta2": 0.999,
+        "eps": 1e-6,
+        "grad_clip": 0.0,
+        "lr_schedule": "linear",
+        "warmup_steps": 10000,
+        "batch_size": 256,
+        "num_steps": 1000000,
+        "precision": "float32",
+        "num_workers": 4,
+        "seed": 42
+      },
+      "data": {
+        "dataset": "c4",
+        "subset": "en",
+        "max_seq_len": 512,
+        "mlm_probability": 0.15,
+        "data_dir": "data/c4/"
+      }
+    },
+    "gmlp_s_imagenet": {
+      "model": {
+        "model_type": "vision",
+        "use_tiny_attn": false,
+        "num_layers": 30,
+        "d_model": 256,
+        "d_ffn": 1536,
+        "seq_len": 196,
+        "img_size": 224,
+        "patch_size": 16,
+        "num_classes": 1000,
+        "use_toeplitz": false,
+        "survival_prob": 0.95,
+        "pool_mode": "avg  # ASSUMED: global avg pool (ambiguity_003, conf=0.70)",
+        "w_init_std": "0.002  # ASSUMED (ambiguity_002, conf=0.65)"
+      },
+      "training": {
+        "optimizer": "adamw",
+        "lr": 1e-3,
+        "weight_decay": 0.05,
+        "beta1": 0.9,
+        "beta2": 0.999,
+        "eps": 1e-6,
+        "grad_clip": 1.0,
+        "lr_schedule": "cosine",
+        "warmup_steps": 10000,
+        "batch_size": 4096,
+        "num_epochs": 300,
+        "precision": "float32",
+        "num_workers": 8,
+        "seed": 42
+      },
+      "data": {
+        "dataset": "imagenet",
+        "data_dir": "data/imagenet/",
+        "augmentation": {
+          "autoaugment": true,
+          "mixup_alpha": 0.8,
+          "cutmix_alpha": 1.0,
+          "cutmix_mixup_switch_prob": 0.5,
+          "label_smoothing": 0.1,
+          "repeated_augmentation": false,
+          "random_erasing_prob": 0.0
+        }
+      }
+    }
+  },
+
+  "dependencies": {
+    "requirements_txt": [
+      "torch>=2.1.0",
+      "torchvision>=0.16.0",
+      "transformers>=4.37.0",
+      "datasets>=2.16.0",
+      "tokenizers>=0.15.0",
+      "sentencepiece>=0.1.99",
+      "accelerate>=0.26.0",
+      "pyyaml>=6.0",
+      "numpy>=1.24.0",
+      "tqdm>=4.65.0",
+      "einops>=0.7.0",
+      "tensorboard>=2.14.0",
+      "scikit-learn>=1.3.0",
+      "timm>=0.9.0"
+    ],
+    "requirements_dev_txt": [
+      "pytest>=7.4.0",
+      "pytest-cov>=4.1.0",
+      "black>=23.0.0",
+      "isort>=5.12.0",
+      "flake8>=6.1.0",
+      "mypy>=1.5.0",
+      "pre-commit>=3.4.0",
+      "jupyter>=1.0.0",
+      "matplotlib>=3.7.0",
+      "seaborn>=0.12.0"
+    ],
+    "environment_yaml": {
+      "name": "gmlp",
+      "channels": ["pytorch", "nvidia", "conda-forge", "defaults"],
+      "dependencies": [
+        "python=3.10",
+        "pytorch=2.1.0",
+        "pytorch-cuda=11.8",
+        "torchvision=0.16.0",
+        "cudatoolkit=11.8",
+        "pip",
+        {"pip": "same as requirements.txt"}
+      ]
+    },
+    "rationale": {
+      "torch": "Core deep learning framework",
+      "transformers": "Tokenizer (BertTokenizerFast / SentencePiece), data collators",
+      "datasets": "C4 / GLUE / SQuAD dataset loading",
+      "accelerate": "Multi-GPU / mixed precision training without boilerplate",
+      "einops": "Clean tensor rearrangement for Toeplitz construction and patch ops",
+      "timm": "AutoAugment policy implementation for ImageNet training",
+      "sentencepiece": "Required by BERT tokenizer used in paper"
+    }
+  },
+
+  "entrypoints": [
+    {
+      "file": "train.py",
+      "purpose": "NLP MLM pretraining (gMLP or aMLP on C4)",
+      "cli_args": [
+        "--config CONFIG_YAML (required)",
+        "--model_type {gmlp,amlp}",
+        "--output_dir OUTPUT_DIR",
+        "--resume_from CHECKPOINT",
+        "--num_steps INT",
+        "--batch_size INT",
+        "--lr FLOAT",
+        "--precision {fp32,bf16}",
+        "--num_gpus INT",
+        "--seed INT",
+        "--log_interval INT",
+        "--save_interval INT",
+        "--eval_interval INT"
+      ]
+    },
+    {
+      "file": "train_vision.py",
+      "purpose": "ImageNet classification training",
+      "cli_args": [
+        "--config CONFIG_YAML (required)",
+        "--model_size {Ti,S,B}",
+        "--data_dir PATH",
+        "--output_dir OUTPUT_DIR",
+        "--epochs INT",
+        "--batch_size INT",
+        "--precision {fp32,bf16}",
+        "--resume_from CHECKPOINT"
+      ]
+    },
+    {
+      "file": "finetune.py",
+      "purpose": "NLP finetuning on GLUE / SQuAD from a pretrained checkpoint",
+      "cli_args": [
+        "--pretrained_checkpoint PATH (required)",
+        "--task {sst2,mnli,squad_v1,squad_v2} (required)",
+        "--config CONFIG_YAML",
+        "--output_dir OUTPUT_DIR",
+        "--num_runs INT (default=5, for median reporting)",
+        "--lr FLOAT",
+        "--batch_size INT",
+        "--num_epochs INT"
+      ]
+    },
+    {
+      "file": "evaluate.py",
+      "purpose": "Evaluate a checkpoint on any supported task",
+      "cli_args": [
+        "--checkpoint PATH (required)",
+        "--task {mlm,sst2,mnli,squad_v1,squad_v2,imagenet} (required)",
+        "--data_dir PATH",
+        "--batch_size INT",
+        "--precision {fp32,bf16}"
+      ]
+    },
+    {
+      "file": "inference.py",
+      "purpose": "Single-sample demo: masked token prediction (NLP) or class prediction (vision)",
+      "cli_args": [
+        "--checkpoint PATH",
+        "--input TEXT or --image PATH",
+        "--task {mlm,classify}"
+      ]
+    }
+  ],
+
+  "docker_spec": {
+    "base_image": "pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime",
+    "system_deps": ["git", "wget", "curl", "build-essential", "libsndfile1"],
+    "python_setup": [
+      "COPY requirements.txt .",
+      "RUN pip install --no-cache-dir -r requirements.txt",
+      "COPY . /workspace/gmlp",
+      "WORKDIR /workspace/gmlp"
+    ],
+    "volumes": ["/data:/workspace/gmlp/data", "/outputs:/workspace/gmlp/outputs"],
+    "default_cmd": "python train.py --config configs/gmlp_base_mlm.yaml",
+    "env_vars": {
+      "PYTHONPATH": "/workspace/gmlp",
+      "TOKENIZERS_PARALLELISM": "false"
+    }
+  },
+
+  "risk_assessment": [
+    {
+      "id": "risk_001",
+      "severity": "High",
+      "category": "Dataset Access",
+      "description": "C4 (full English) is ~300GB compressed. Download and preprocessing time is significant. HuggingFace streaming mode should be enabled to avoid full disk materialization.",
+      "mitigation": "Use datasets.load_dataset('c4', 'en', streaming=True). Provide fallback to C4/RealNews (smaller subset) for ablation reproduction.",
+      "sir_ref": "training_pipeline.nlp_pretraining.dataset_main"
+    },
+    {
+      "id": "risk_002",
+      "severity": "High",
+      "category": "Compute Requirement",
+      "description": "Full BERTbase-equivalent training (1M steps, 256 batch, 512 seq_len) requires ~100+ A100-GPU-hours. gMLPbase is larger (130M params, higher FLOPs) so even more.",
+      "mitigation": "Provide ablation-scale config (125K steps, 128 seq_len, 2048 batch, C4/RealNews) as the default runnable config. Full training is optional.",
+      "sir_ref": "training_pipeline.nlp_pretraining"
+    },
+    {
+      "id": "risk_003",
+      "severity": "Medium",
+      "category": "Ambiguous Implementation",
+      "description": "aMLP fusion mechanism (how tiny_attn combines with spatial gate) has confidence 0.75. Wrong fusion could cause significant performance regression on MNLI/SQuAD.",
+      "mitigation": "Implement fusion_mode as a config parameter ('add', 'concat', 'replace'). Default 'add'. Document as TODO:verify.",
+      "sir_ref": "ambiguity_001"
+    },
+    {
+      "id": "risk_004",
+      "severity": "Medium",
+      "category": "Numerical Stability",
+      "description": "W initialization std is unspecified. Too large → SGU diverges early (bypasses FFN-like initialization goal). Too small → no learning in spatial weights.",
+      "mitigation": "Default w_init_std=0.002. Add numerical stability check (monitor SGU gate norms in first 1K steps). Make configurable.",
+      "sir_ref": "ambiguity_002, assume_002"
+    },
+    {
+      "id": "risk_005",
+      "severity": "Medium",
+      "category": "Quadratic Scaling",
+      "description": "The spatial projection W ∈ R^{n×n} is quadratic in sequence length. At n=512 (BERT setup), W has 262K parameters per layer × 48 layers = 12.6M spatial params. Memory and compute are O(n²) per layer.",
+      "mitigation": "Enforce Toeplitz constraint for NLP (reduces to 2n-1 params per layer). Warn user when n > 512. The Toeplitz trick is quality-neutral per the paper.",
+      "sir_ref": "architecture.toeplitz_constraint, mathematical_spec.eq6"
+    },
+    {
+      "id": "risk_006",
+      "severity": "Medium",
+      "category": "Ambiguous Vision Pooling",
+      "description": "Whether CLS token or global average pool is used for vision classification has confidence 0.70.",
+      "mitigation": "Implement both; default global avg pool (pool_mode='avg'). Add config flag pool_mode='cls' as alternative.",
+      "sir_ref": "ambiguity_003"
+    },
+    {
+      "id": "risk_007",
+      "severity": "Low",
+      "category": "Tokenizer Mismatch",
+      "description": "Paper uses 32K cased SentencePiece vocabulary. HuggingFace BertTokenizer uses WordPiece. For exact reproduction, sentencepiece model must be trained on C4 or sourced from T5/mT5.",
+      "mitigation": "Use google/t5-base tokenizer (SentencePiece, 32K vocab, cased) as a close proxy. Document the substitution.",
+      "sir_ref": "training_pipeline.nlp_pretraining.vocabulary"
+    },
+    {
+      "id": "risk_008",
+      "severity": "Low",
+      "category": "Stochastic Depth",
+      "description": "Stochastic depth survival_prob per layer is specified only for the 3 vision model sizes. NLP models do not use it.",
+      "mitigation": "Implement as DropPath per block; set p=0.0 for NLP configs. Vision configs use values from Table 1.",
+      "sir_ref": "training_pipeline.vision_pretraining.stochastic_depth"
+    }
+  ],
+
+  "plan_confidence": {
+    "framework_selection": 0.92,
+    "module_hierarchy": 0.93,
+    "tensor_flows": 0.91,
+    "config_schema": 0.90,
+    "dependencies": 0.95,
+    "entrypoints": 0.95,
+    "docker_spec": 0.95,
+    "risk_assessment": 0.97,
+    "overall_plan_confidence": 0.93
+  }
+}
