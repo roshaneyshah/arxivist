@@ -1,0 +1,490 @@
+{
+  "paper_id": "paper_chunking_methods_rag_2026",
+  "version": 1,
+  "schema_version": "1.0",
+
+  "provenance": {
+    "title": "Chunking Methods on Retrieval-Augmented Generation – Effectiveness Evaluation Against Computational Cost and Limitations",
+    "authors": [
+      "Mateusz Śmigielski",
+      "Michał Rajkowski",
+      "Mateusz Zbrocki",
+      "Michał Bernacki-Janson",
+      "Karol Kunicki",
+      "Julianna Godziszewska",
+      "Maciej Piasecki",
+      "Konrad Wojtasik"
+    ],
+    "institution": "Department of Artificial Intelligence, Faculty of Information and Communication Technology, Wrocław University of Science and Technology, Wrocław, Poland",
+    "arxiv_id": "2606.00881",
+    "venue": "30th International Conference on Knowledge-Based and Intelligent Information & Engineering Systems (KES 2026), Procedia Computer Science",
+    "submission_date": "2026-05-30",
+    "abstract": "This study is the first to systematically evaluate a wide range of chunking methods in RAG systems, emphasizing practical and methodological challenges. It shows that computationally expensive chunking methods do not yield meaningful effectiveness improvements while introducing substantially higher overhead.",
+    "primary_domain": "NLP",
+    "key_claims": [
+      "This is the first systematic evaluation comparing a wide range of chunking methods across diverse datasets and tasks.",
+      "More computationally expensive chunking methods do NOT yield meaningful effectiveness improvements over simpler baselines.",
+      "Chunking introduces practical challenges (timeouts, memory failures, implementation fragility) that are often overlooked.",
+      "Chunk quality and structural coherence are more important than chunk quantity for retrieval performance.",
+      "Fixed-size and Recursive Semantic chunking provide the best trade-off between robustness and retrieval effectiveness."
+    ],
+    "parsed_at": "2026-06-22T00:00:00Z"
+  },
+
+  "architecture": {
+    "description": "This is a RAG evaluation framework paper, NOT a novel model architecture paper. The system consists of a standard RAG pipeline with interchangeable chunking front-ends. The architecture is a benchmark harness, not a neural network.",
+    "system_type": "RAG_evaluation_framework",
+    "components": [
+      {
+        "name": "Document Corpus",
+        "role": "Input — raw documents from multiple QA datasets",
+        "output": "Raw text D = <t1, t2, ..., tN> (sequence of tokens)"
+      },
+      {
+        "name": "Chunker (interchangeable)",
+        "role": "Maps document D into chunk set C = {c1, c2, ..., cm}",
+        "variants": [
+          "Fixed-size (512 tokens, 50-token overlap)",
+          "Recursive Semantic",
+          "Sequential HAC (Hierarchical Agglomerative Chunking)",
+          "Max-Min Semantic Chunking",
+          "TextTiling (modified to sentence-level alignment)",
+          "GraphSeg",
+          "LumberChunker (LLM-based)",
+          "DenseX (Propositions)"
+        ],
+        "output": "Chunk set C"
+      },
+      {
+        "name": "Embedding Model (bge-m3)",
+        "role": "Maps each chunk c ∈ C to a dense vector v ∈ R^d",
+        "model_id": "bge-m3",
+        "operation": "E(c) → R^d"
+      },
+      {
+        "name": "Vector Index",
+        "role": "Stores all chunk embeddings for approximate nearest-neighbor retrieval",
+        "operation": "Indexed set of (chunk, embedding) pairs"
+      },
+      {
+        "name": "Retriever",
+        "role": "Given query q, retrieves top-k chunks by cosine similarity",
+        "primary_model": "bge-m3",
+        "reranker": "bge-reranker-v2-m3",
+        "k_values": [5, 10]
+      },
+      {
+        "name": "Reranker",
+        "role": "Re-scores top-k retrieved chunks for improved relevance ordering",
+        "model_id": "bge-reranker-v2-m3"
+      },
+      {
+        "name": "Generator LLM",
+        "role": "Answers query conditioned on top-5 retrieved chunks (max 4000 tokens context)",
+        "model_id": "GPT-OSS-20B"
+      },
+      {
+        "name": "LLM-as-a-Judge",
+        "role": "Evaluates generated answers against ground-truth using 5-point Likert scale",
+        "model_id": "GPT-OSS-20B",
+        "scale": "1 (poor) to 5 (highly accurate)"
+      }
+    ],
+    "data_flow": [
+      "Document → Chunker → Chunk Set C",
+      "Chunk Set C → Embedding Model → Vector Index",
+      "Query q → Embedding Model → Query Vector E(q)",
+      "E(q) + Vector Index → Retriever → top-k chunks",
+      "top-k chunks → Reranker → reranked top-k chunks",
+      "Query + top-5 reranked chunks → Generator LLM → Answer",
+      "Answer + Ground Truth → LLM-as-a-Judge → Likert Score (1–5)"
+    ],
+    "confidence": 0.95,
+    "note": "Architecture is a benchmark harness. No novel neural architecture is proposed."
+  },
+
+  "mathematical_spec": {
+    "equations": [
+      {
+        "id": "EQ1",
+        "name": "Document Tokenization",
+        "latex": "D = \\langle t_1, t_2, \\ldots, t_N \\rangle",
+        "role": "Formal definition of document as a sequence of atomic token units",
+        "used_in": "preprocessing",
+        "confidence": 0.99
+      },
+      {
+        "id": "EQ2",
+        "name": "Chunking Function",
+        "latex": "f_\\theta : D \\rightarrow C = \\{c_1, c_2, \\ldots, c_m\\}, \\quad c_i = \\langle t_{\\text{start}_i}, \\ldots, t_{\\text{end}_i} \\rangle",
+        "role": "Maps document D to a set of text segments/chunks; segments may overlap",
+        "used_in": "preprocessing",
+        "note": "θ represents method-specific hyperparameters (e.g. chunk size, overlap, similarity threshold)",
+        "confidence": 0.99
+      },
+      {
+        "id": "EQ3",
+        "name": "Top-k Retrieval via Cosine Similarity",
+        "latex": "C_{\\text{retrieved}} = \\arg \\underset{c \\in C}{\\text{top-}k} \\left( \\frac{E(q) \\cdot E(c)}{\\|E(q)\\| \\|E(c)\\|} \\right)",
+        "role": "Core retrieval objective: select k chunks whose embeddings are most similar to query embedding",
+        "used_in": "retrieval inference",
+        "hyperparameters": ["k (= 5 for Accuracy@5, = 10 for Recall@10)"],
+        "confidence": 0.99
+      },
+      {
+        "id": "EQ4",
+        "name": "Relevance Label Assignment",
+        "latex": "\\text{relevant}(c, q) = \\mathbf{1}[c \\cap \\text{answer\\_span}(q) \\neq \\emptyset]",
+        "role": "A chunk is considered relevant if it overlaps with the extractive answer span; if no span, all chunks from the relevant document are labeled relevant",
+        "used_in": "evaluation",
+        "confidence": 0.90
+      },
+      {
+        "id": "EQ5",
+        "name": "Accuracy@k",
+        "latex": "\\text{Accuracy}@k = \\frac{1}{|Q|} \\sum_{q \\in Q} \\mathbf{1}\\left[\\exists c \\in C_{\\text{retrieved}}^{(k)} : \\text{relevant}(c, q) = 1\\right]",
+        "role": "Fraction of queries for which at least one relevant chunk appears in the top-k retrieved set",
+        "used_in": "evaluation — Experiment 1 (Evidence Retrieval)",
+        "confidence": 0.92
+      },
+      {
+        "id": "EQ6",
+        "name": "Recall@k",
+        "latex": "\\text{Recall}@k = \\frac{1}{|Q|} \\sum_{q \\in Q} \\frac{|C_{\\text{retrieved}}^{(k)} \\cap C_{\\text{relevant}}(q)|}{|C_{\\text{relevant}}(q)|}",
+        "role": "Average fraction of all relevant chunks that are retrieved in the top-k",
+        "used_in": "evaluation — Experiment 1 (Evidence Retrieval)",
+        "confidence": 0.92
+      },
+      {
+        "id": "EQ7",
+        "name": "Semantic Misalignment Condition",
+        "latex": "E(c) \\text{ dominated by irrelevant content} \\Rightarrow \\text{semantic misalignment with } E(q)",
+        "role": "Theoretical motivation for chunking — poor chunking pollutes embedding space",
+        "used_in": "motivation / theoretical background",
+        "confidence": 0.88
+      }
+    ],
+    "confidence": 0.93
+  },
+
+  "tensor_semantics": {
+    "note": "This is a systems evaluation paper. No neural network weight tensors are defined. The following are the key data objects.",
+    "objects": [
+      {
+        "name": "document_tokens",
+        "notation": "D",
+        "shape": "[N]",
+        "description": "Sequence of N tokens in a document",
+        "dtype": "str / int (tokenizer-dependent)",
+        "role": "input"
+      },
+      {
+        "name": "chunk",
+        "notation": "c_i",
+        "shape": "[L_i]",
+        "description": "Subsequence of document tokens; L_i varies by method",
+        "dtype": "str",
+        "role": "intermediate"
+      },
+      {
+        "name": "chunk_embedding",
+        "notation": "E(c)",
+        "shape": "[d]",
+        "description": "Dense vector representation of a chunk from bge-m3; d is the model's embedding dimension",
+        "dtype": "float32",
+        "role": "intermediate"
+      },
+      {
+        "name": "query_embedding",
+        "notation": "E(q)",
+        "shape": "[d]",
+        "description": "Dense vector representation of a query from bge-m3",
+        "dtype": "float32",
+        "role": "intermediate"
+      },
+      {
+        "name": "retrieved_chunks",
+        "notation": "C_retrieved",
+        "shape": "[k, L_i]",
+        "description": "Set of top-k chunks selected by cosine similarity; k=5 or k=10",
+        "dtype": "str",
+        "role": "intermediate"
+      },
+      {
+        "name": "generation_context",
+        "notation": "ctx",
+        "shape": "[<=4000 tokens]",
+        "description": "Concatenation of top-5 retrieved chunks fed to the generator LLM",
+        "dtype": "str",
+        "role": "input to generator"
+      },
+      {
+        "name": "likert_score",
+        "notation": "s",
+        "shape": "scalar",
+        "description": "LLM-as-a-judge score in {1, 2, 3, 4, 5}",
+        "dtype": "int",
+        "role": "output (evaluation)"
+      }
+    ],
+    "confidence": 0.88
+  },
+
+  "training_pipeline": {
+    "note": "This is an evaluation/benchmark paper. There is NO model training. The evaluation process is described instead.",
+    "evaluation_pipeline": {
+      "step1_chunking": {
+        "description": "Each chunking method segments all documents in each dataset",
+        "time_limit": "48 hours per method-dataset combination",
+        "parallelism": "20 nodes, each running ~1/4 of a node's resources"
+      },
+      "step2_embedding": {
+        "model": "bge-m3",
+        "role": "Embed all chunks into dense vector space"
+      },
+      "step3_indexing": {
+        "description": "Store all chunk embeddings in a vector index for retrieval"
+      },
+      "step4_retrieval": {
+        "retriever": "bge-m3",
+        "reranker": "bge-reranker-v2-m3",
+        "benchmark": "PIRB (Polish Information Retrieval Benchmark)",
+        "metrics": ["Accuracy@5", "Recall@10"]
+      },
+      "step5_generation": {
+        "generator": "GPT-OSS-20B",
+        "context_limit": "4000 tokens",
+        "top_k_chunks": 5,
+        "judge_model": "GPT-OSS-20B",
+        "judge_scale": "5-point Likert (1=poor, 5=excellent)"
+      }
+    },
+    "hardware": {
+      "nodes": 20,
+      "cpu_per_node": "2x Intel Xeon Platinum 8462Y (32 cores, 2.8 GHz)",
+      "gpu_per_node": "4x Nvidia H100 96GB, 16896 CUDA cores, 1980 MHz",
+      "ram_per_node": "1006 GB ECC DDR5 @ 4800 MT/s"
+    },
+    "confidence": 0.90
+  },
+
+  "evaluation_protocol": {
+    "experiments": [
+      {
+        "id": "EXP1",
+        "name": "Evidence Retrieval",
+        "description": "Evaluate whether relevant chunks appear in top-k retrieved results for each query",
+        "metrics": ["Accuracy@5", "Recall@10"],
+        "retriever": "bge-m3",
+        "reranker": "bge-reranker-v2-m3",
+        "benchmark": "PIRB"
+      },
+      {
+        "id": "EXP2",
+        "name": "End-to-End RAG Answer Generation",
+        "description": "Evaluate quality of LLM-generated answers using LLM-as-a-judge on 5-point Likert scale",
+        "metrics": ["LLM-judge score (1-5)"],
+        "generator": "GPT-OSS-20B",
+        "judge": "GPT-OSS-20B",
+        "context_window": "4000 tokens",
+        "top_k": 5,
+        "note": "TextTiling excluded from this experiment due to modified implementation"
+      }
+    ],
+    "datasets": [
+      {"name": "GutenQA", "domain": "Narrative/Literary", "docs": 36917, "avg_len": 1814},
+      {"name": "GutenQA merged", "domain": "Narrative/Literary (stress-test)", "docs": 1, "avg_len": 67058241},
+      {"name": "LiteraryQA", "domain": "Narrative/Literary", "docs": 138, "avg_len": 411471},
+      {"name": "Natural Questions (NQ)", "domain": "Open-domain", "docs": 300, "avg_len": 45634},
+      {"name": "NovelQA", "domain": "Narrative/Literary (long)", "docs": 60, "avg_len": 1007786},
+      {"name": "PoQuAD", "domain": "Polish QA", "docs": 1449, "avg_len": 922},
+      {"name": "PoQuAD merged", "domain": "Polish QA (stress-test)", "docs": 1, "avg_len": "N/A"},
+      {"name": "Qasper", "domain": "Scientific", "docs": 416, "avg_len": 1014},
+      {"name": "SQuAD", "domain": "Open-domain", "docs": 100, "avg_len": 29971},
+      {"name": "TriviaQA", "domain": "Open-domain", "docs": 1000, "avg_len": 14239},
+      {"name": "TriviaQA merged", "domain": "Open-domain (stress-test)", "docs": 1, "avg_len": 14241172}
+    ],
+    "chunking_methods_evaluated": [
+      {
+        "name": "Fixed-size",
+        "config": "chunk_size=512, overlap=50",
+        "avg_accuracy5": 87.71,
+        "avg_recall10": 44.75,
+        "avg_chunking_time": "<1s",
+        "avg_llm_judge": 3.76,
+        "robustness": "HIGH — completes all datasets"
+      },
+      {
+        "name": "Recursive Semantic",
+        "config": "default from LangChain",
+        "avg_accuracy5": 89.36,
+        "avg_recall10": 53.81,
+        "avg_chunking_time": "4.90m",
+        "avg_llm_judge": 3.86,
+        "robustness": "HIGH — completes all datasets"
+      },
+      {
+        "name": "Sequential HAC",
+        "config": "default from publication",
+        "avg_accuracy5": 80.09,
+        "avg_recall10": 33.85,
+        "avg_chunking_time": "2.10m",
+        "avg_llm_judge": 3.35,
+        "robustness": "HIGH — completes all datasets"
+      },
+      {
+        "name": "Max-min",
+        "config": "default from publication",
+        "avg_accuracy5": 85.75,
+        "avg_recall10": 41.68,
+        "avg_chunking_time": "2.44m",
+        "avg_llm_judge": 3.61,
+        "robustness": "HIGH — completes all datasets"
+      },
+      {
+        "name": "TextTiling",
+        "config": "Modified to sentence-level boundary alignment",
+        "avg_accuracy5": 84.96,
+        "avg_recall10": 39.85,
+        "avg_chunking_time": "1.56m",
+        "avg_llm_judge": null,
+        "robustness": "MEDIUM — completes retrieval but excluded from end-to-end"
+      },
+      {
+        "name": "GraphSeg",
+        "config": "default from publication",
+        "avg_accuracy5": 86.85,
+        "avg_recall10": 61.75,
+        "avg_chunking_time": "3.09h",
+        "avg_llm_judge": 4.13,
+        "robustness": "LOW — spaCy memory errors on large documents (S marker)"
+      },
+      {
+        "name": "LumberChunker",
+        "config": "GPT-OSS-20B as underlying LLM",
+        "avg_accuracy5": 85.44,
+        "avg_recall10": 78.16,
+        "avg_chunking_time": "8.37h",
+        "avg_llm_judge": 4.35,
+        "robustness": "LOW — exceeds 48h time limit on many datasets (T marker)"
+      },
+      {
+        "name": "DenseX (Propositions)",
+        "config": "default from publication",
+        "avg_accuracy5": 69.10,
+        "avg_recall10": 27.43,
+        "avg_chunking_time": "15.05h",
+        "avg_llm_judge": 3.83,
+        "robustness": "LOW — very high latency; frequently times out (T marker)"
+      }
+    ],
+    "failure_markers": {
+      "T": "Chunking procedure exceeded 48-hour time limit",
+      "S": "spaCy library triggered error due to excessive temporary memory requirements on documents > 1M characters"
+    },
+    "key_findings": [
+      "Fixed-size chunking is fastest by orders of magnitude (<1s) with competitive accuracy.",
+      "Recursive Semantic achieves highest Accuracy@5 (89.36%) with moderate time (4.90m avg).",
+      "LumberChunker achieves highest Recall@10 (78.16%) and LLM-judge score (4.35) but fails on most datasets due to timeouts.",
+      "GraphSeg achieves highest Recall@10 among robust methods (61.75%) but fails on large documents.",
+      "DenseX is the slowest method (avg 15h) with the lowest Accuracy@5 (69.10%), making it generally impractical.",
+      "Chunk quality/coherence is more important than chunk quantity for retrieval performance.",
+      "Advanced chunking methods do not meaningfully outperform simple baselines when robustness and time are considered."
+    ],
+    "confidence": 0.97
+  },
+
+  "implementation_assumptions": [
+    {
+      "assumption": "bge-m3 embedding dimension is 1024",
+      "basis": "Standard BAAI/bge-m3 model specification — not stated in paper",
+      "confidence": 0.90,
+      "alternatives": ["768 (BERT-base size)", "varies by pooling"]
+    },
+    {
+      "assumption": "Vector index uses cosine similarity with approximate nearest-neighbor (e.g., FAISS or similar)",
+      "basis": "Standard RAG pipeline practice; paper states cosine similarity formula but not specific index library",
+      "confidence": 0.75,
+      "alternatives": ["Exact cosine search", "dot product similarity"]
+    },
+    {
+      "assumption": "PIRB evaluation uses the standard PIRB benchmark setup from Dadas et al. 2024",
+      "basis": "Cited directly; specific query/answer format inferred from citation",
+      "confidence": 0.85,
+      "alternatives": []
+    },
+    {
+      "assumption": "TextTiling modification aligns chunk boundaries to nearest sentence boundary rather than paragraph",
+      "basis": "Explicitly stated in paper (Section 3)",
+      "confidence": 0.99,
+      "alternatives": ["Original paragraph-level alignment (produces no effective segmentation)"]
+    },
+    {
+      "assumption": "LumberChunker uses GPT-OSS-20B as the internal chunking LLM (not the original GPT-4)",
+      "basis": "Explicitly stated in paper (Section 3)",
+      "confidence": 0.99,
+      "alternatives": ["Original LumberChunker uses GPT-4"]
+    },
+    {
+      "assumption": "Hyperparameters for all methods taken from original publications or official repos; not tuned",
+      "basis": "Explicitly stated in paper (Section 3)",
+      "confidence": 0.99,
+      "alternatives": ["Grid search over hyperparameter space"]
+    },
+    {
+      "assumption": "Chunk sizes NOT normalized across methods — each method uses its own natural granularity",
+      "basis": "Explicitly stated in paper (Section 3)",
+      "confidence": 0.99,
+      "alternatives": ["Normalizing all methods to same average chunk size"]
+    },
+    {
+      "assumption": "Python is the implementation language (inferred from spaCy, LangChain, and standard ML tooling)",
+      "basis": "Common practice; spaCy and LangChain are Python libraries",
+      "confidence": 0.95,
+      "alternatives": []
+    },
+    {
+      "assumption": "For the reproducible harness, we will implement Fixed-size, Recursive Semantic, Sequential HAC, and Max-min as the four robustly-completing methods",
+      "basis": "Paper explicitly identifies these four as the methods that 'consistently complete processing across datasets'",
+      "confidence": 0.99,
+      "alternatives": ["Include GraphSeg and TextTiling as optional extras"]
+    }
+  ],
+
+  "ambiguities": [
+    {
+      "location": "Section 3 — Retrieval evaluation",
+      "description": "It is not specified whether the PIRB benchmark's queries or the dataset's own queries are used for evaluation. The paper mentions 'unified Polish Information Retrieval Benchmark (PIRB)' but also uses non-Polish datasets (SQuAD, TriviaQA, etc.).",
+      "primary_assumption": "PIRB is used as the evaluation framework/protocol (accuracy/recall metrics), but each dataset's own queries are used as the query set",
+      "confidence": 0.70
+    },
+    {
+      "location": "Table 2 — Recall@10 for GraphSeg",
+      "description": "GraphSeg shows S (spaCy error) for most large datasets but reports numbers for some. The exact cutoff for document length triggering the error is not stated.",
+      "primary_assumption": "Errors occur for documents > 1,000,000 characters as stated in the marker description",
+      "confidence": 0.80
+    },
+    {
+      "location": "Section 3 — LumberChunker config",
+      "description": "GPT-OSS-20B is described as the underlying LLM for LumberChunker, but the exact API endpoint, temperature, and sampling parameters are not specified",
+      "primary_assumption": "Default inference settings (temperature=1.0 or greedy)",
+      "confidence": 0.55
+    },
+    {
+      "location": "Section 3.2 — End-to-end evaluation",
+      "description": "The paper says 'a subset of the original datasets' was used for the end-to-end experiment due to 'missing answers in some datasets' but does not specify which datasets were excluded",
+      "primary_assumption": "Datasets without ground-truth answer spans were excluded; NQ and NovelQA are likely excluded based on table",
+      "confidence": 0.72
+    }
+  ],
+
+  "confidence_annotations": {
+    "architecture": 0.95,
+    "mathematical_spec": 0.93,
+    "tensor_semantics": 0.88,
+    "training_pipeline": 0.90,
+    "evaluation_protocol": 0.97,
+    "implementation_assumptions": 0.85,
+    "overall_sir_confidence": 0.91
+  }
+}

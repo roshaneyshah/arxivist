@@ -1,0 +1,27 @@
+# ==========================================
+# 1. THE INJECTED ENGINE (Critical Anchors)
+# ==========================================
+transformers==4.41.2
+langchain-core==0.3.25
+
+# ==========================================
+# 2. THE AUDITED BENCHMARK STACK
+# ==========================================
+numpy==1.26.4
+scipy==1.13.0
+scikit-learn==1.5.0
+pandas==2.2.2
+
+sentence-transformers==3.0.1
+faiss-cpu==1.8.0
+
+spacy==3.7.4
+nltk==3.8.1
+tiktoken==0.7.0
+
+langchain-text-splitters==0.3.8
+openai==1.35.0
+
+datasets==2.20.0
+pyyaml==6.0.1
+tqdm==4.66.4
