@@ -1,0 +1,686 @@
+{
+  "paper_id": "paper_chunking_methods_rag_2026",
+  "plan_version": 1,
+  "generated_at": "2026-06-22T00:00:00Z",
+
+  "framework_selection": {
+    "primary_language": "Python 3.10+",
+    "primary_framework": "HuggingFace (sentence-transformers + transformers)",
+    "vector_store": "FAISS (faiss-cpu or faiss-gpu)",
+    "llm_interface": "OpenAI-compatible API (for GPT-OSS-20B generator and judge)",
+    "chunking_libs": [
+      "langchain-text-splitters (Fixed-size, Recursive)",
+      "sentence-transformers (semantic similarity for HAC, Max-min)",
+      "nltk / spacy (sentence tokenization)",
+      "scipy (agglomerative clustering for HAC)",
+      "scikit-learn (cosine similarity utilities)"
+    ],
+    "config_management": "YAML + dataclasses (no Hydra — keeps deps lightweight)",
+    "reasoning": "Paper is a Python-ecosystem benchmark. No PyTorch training loop required — the embedding models are used inference-only via sentence-transformers. FAISS provides the cosine similarity index. LangChain text splitters directly implement two of the required chunkers. All four robust methods (Fixed-size, Recursive, HAC, Max-min) are implementable with these libraries."
+  },
+
+  "project_name": "rag_chunking_bench",
+
+  "module_hierarchy": {
+    "root": "paper-repos/paper_chunking_methods_rag_2026/",
+    "files": [
+      {
+        "path": "src/rag_chunking_bench/__init__.py",
+        "description": "Package init. Exports top-level symbols.",
+        "classes": [],
+        "sir_mapping": "top-level package"
+      },
+      {
+        "path": "src/rag_chunking_bench/chunkers/__init__.py",
+        "description": "Chunker sub-package init. Exports ChunkerRegistry.",
+        "classes": ["ChunkerRegistry"],
+        "public_methods": {
+          "ChunkerRegistry": [
+            "register(name: str, cls: type) -> None",
+            "get(name: str) -> BaseChunker",
+            "list_available() -> list[str]"
+          ]
+        },
+        "sir_mapping": "SIR architecture: Chunker (interchangeable)"
+      },
+      {
+        "path": "src/rag_chunking_bench/chunkers/base.py",
+        "description": "Abstract base class for all chunkers. Enforces the f_theta(D) -> C interface from EQ2.",
+        "classes": ["BaseChunker"],
+        "public_methods": {
+          "BaseChunker": [
+            "__init__(self, config: dict) -> None",
+            "chunk(self, document: str) -> list[str]  # f_theta: D -> C",
+            "chunk_batch(self, documents: list[str]) -> list[list[str]]",
+            "get_config(self) -> dict",
+            "name(self) -> str  # property"
+          ]
+        },
+        "sir_mapping": "EQ2 — chunking function f_theta"
+      },
+      {
+        "path": "src/rag_chunking_bench/chunkers/fixed_size.py",
+        "description": "Fixed-size chunker: chunk_size=512 tokens, overlap=50. Wraps LangChain RecursiveCharacterTextSplitter with character-count mode.",
+        "classes": ["FixedSizeChunker"],
+        "public_methods": {
+          "FixedSizeChunker": [
+            "__init__(self, chunk_size: int = 512, overlap: int = 50) -> None",
+            "chunk(self, document: str) -> list[str]"
+          ]
+        },
+        "sir_mapping": "SIR: Fixed-size (512, overlap=50)",
+        "confidence": 0.99
+      },
+      {
+        "path": "src/rag_chunking_bench/chunkers/recursive_semantic.py",
+        "description": "Recursive semantic chunker: LangChain RecursiveCharacterTextSplitter with semantic separators hierarchy [paragraph, sentence, word]. Default config from LangChain.",
+        "classes": ["RecursiveSemanticChunker"],
+        "public_methods": {
+          "RecursiveSemanticChunker": [
+            "__init__(self, chunk_size: int = 512, overlap: int = 50, separators: list[str] | None = None) -> None",
+            "chunk(self, document: str) -> list[str]"
+          ]
+        },
+        "sir_mapping": "SIR: Recursive Semantic (LangChain default)",
+        "confidence": 0.92
+      },
+      {
+        "path": "src/rag_chunking_bench/chunkers/sequential_hac.py",
+        "description": "Sequential Hierarchical Agglomerative Chunking. Splits document into sentences, embeds each, merges adjacent pairs by cosine similarity until threshold not met. Enforces narrative continuity (no positional weight tuning).",
+        "classes": ["SequentialHACChunker"],
+        "public_methods": {
+          "SequentialHACChunker": [
+            "__init__(self, similarity_threshold: float = 0.85, embed_model: str = 'BAAI/bge-m3', max_chunk_tokens: int = 512) -> None",
+            "chunk(self, document: str) -> list[str]",
+            "_sentence_split(self, text: str) -> list[str]",
+            "_embed_sentences(self, sentences: list[str]) -> np.ndarray  # [N, d]",
+            "_agglomerate(self, sentences: list[str], embeddings: np.ndarray) -> list[str]"
+          ]
+        },
+        "sir_mapping": "SIR: Sequential HAC Chunker — Qu et al. 2025",
+        "confidence": 0.88,
+        "note": "similarity_threshold default from original publication; flag as TODO verify"
+      },
+      {
+        "path": "src/rag_chunking_bench/chunkers/max_min.py",
+        "description": "Max-Min Semantic Chunking. Greedy: adds sentences to current chunk if max similarity to chunk exceeds adaptive threshold derived from chunk's minimum coherence. Controls chunk growth dynamically.",
+        "classes": ["MaxMinChunker"],
+        "public_methods": {
+          "MaxMinChunker": [
+            "__init__(self, embed_model: str = 'BAAI/bge-m3', alpha: float = 0.5) -> None",
+            "chunk(self, document: str) -> list[str]",
+            "_compute_adaptive_threshold(self, chunk_embeddings: np.ndarray) -> float",
+            "_should_extend(self, sentence_emb: np.ndarray, chunk_embeddings: np.ndarray, threshold: float) -> bool"
+          ]
+        },
+        "sir_mapping": "SIR: Max-Min Semantic Chunking — Kiss et al. 2025",
+        "confidence": 0.83,
+        "note": "alpha parameter controls threshold sensitivity; default from publication — TODO verify"
+      },
+      {
+        "path": "src/rag_chunking_bench/chunkers/texttiling.py",
+        "description": "TextTiling (Hearst 1997) with paper-specified modification: chunk boundaries aligned to nearest SENTENCE (not paragraph). Uses lexical cohesion / block comparison to detect topic shifts.",
+        "classes": ["TextTilingChunker"],
+        "public_methods": {
+          "TextTilingChunker": [
+            "__init__(self, w: int = 20, k: int = 10, smoothing_width: int = 2) -> None",
+            "chunk(self, document: str) -> list[str]",
+            "_align_to_sentence_boundary(self, text: str, char_offset: int) -> int"
+          ]
+        },
+        "sir_mapping": "SIR: TextTiling (modified, sentence-level alignment)",
+        "confidence": 0.90,
+        "tier": "optional_extras"
+      },
+      {
+        "path": "src/rag_chunking_bench/embedding/embedder.py",
+        "description": "Embedding module. Wraps sentence-transformers for bge-m3. Provides batch encode for chunks and queries. Returns L2-normalized vectors for cosine similarity.",
+        "classes": ["ChunkEmbedder"],
+        "public_methods": {
+          "ChunkEmbedder": [
+            "__init__(self, model_name: str = 'BAAI/bge-m3', device: str = 'auto', batch_size: int = 64) -> None",
+            "encode(self, texts: list[str], normalize: bool = True) -> np.ndarray  # [N, d=1024]",
+            "encode_query(self, query: str, normalize: bool = True) -> np.ndarray  # [d=1024]"
+          ]
+        },
+        "sir_mapping": "SIR: Embedding Model (bge-m3); EQ3 — E(q), E(c)"
+      },
+      {
+        "path": "src/rag_chunking_bench/embedding/reranker.py",
+        "description": "Reranker module. Wraps bge-reranker-v2-m3 cross-encoder to re-score retrieved chunks.",
+        "classes": ["ChunkReranker"],
+        "public_methods": {
+          "ChunkReranker": [
+            "__init__(self, model_name: str = 'BAAI/bge-reranker-v2-m3', device: str = 'auto') -> None",
+            "rerank(self, query: str, chunks: list[str], top_k: int = 5) -> list[tuple[str, float]]  # (chunk, score) sorted desc"
+          ]
+        },
+        "sir_mapping": "SIR: Reranker (bge-reranker-v2-m3)"
+      },
+      {
+        "path": "src/rag_chunking_bench/retrieval/index.py",
+        "description": "FAISS vector index. Stores (chunk_text, embedding) pairs. Implements EQ3: top-k cosine retrieval.",
+        "classes": ["FAISSChunkIndex"],
+        "public_methods": {
+          "FAISSChunkIndex": [
+            "__init__(self, embedding_dim: int = 1024, use_gpu: bool = False) -> None",
+            "build(self, chunks: list[str], embeddings: np.ndarray) -> None",
+            "search(self, query_emb: np.ndarray, k: int = 10) -> tuple[list[str], list[float]]  # chunks, scores",
+            "save(self, path: str) -> None",
+            "load(self, path: str) -> None"
+          ]
+        },
+        "sir_mapping": "SIR: Vector Index + EQ3 (cosine top-k)"
+      },
+      {
+        "path": "src/rag_chunking_bench/retrieval/retriever.py",
+        "description": "End-to-end retrieval pipeline: embeds query, searches index, reranks. Returns top-k chunks for downstream use.",
+        "classes": ["RAGRetriever"],
+        "public_methods": {
+          "RAGRetriever": [
+            "__init__(self, index: FAISSChunkIndex, embedder: ChunkEmbedder, reranker: ChunkReranker | None = None) -> None",
+            "retrieve(self, query: str, k: int = 10) -> list[str]",
+            "retrieve_with_scores(self, query: str, k: int = 10) -> list[tuple[str, float]]"
+          ]
+        },
+        "sir_mapping": "SIR: Retriever + Reranker components"
+      },
+      {
+        "path": "src/rag_chunking_bench/generation/generator.py",
+        "description": "LLM generation wrapper. Calls OpenAI-compatible API with query + top-5 chunks as context (max 4000 tokens). Used for Experiment 2.",
+        "classes": ["RAGGenerator"],
+        "public_methods": {
+          "RAGGenerator": [
+            "__init__(self, model: str = 'gpt-oss-20b', api_base: str, api_key: str, max_context_tokens: int = 4000) -> None",
+            "generate(self, query: str, context_chunks: list[str]) -> str",
+            "_build_prompt(self, query: str, context_chunks: list[str]) -> str",
+            "_truncate_context(self, chunks: list[str], max_tokens: int) -> list[str]"
+          ]
+        },
+        "sir_mapping": "SIR: Generator LLM (GPT-OSS-20B, top-5 chunks, 4000 token limit)"
+      },
+      {
+        "path": "src/rag_chunking_bench/generation/judge.py",
+        "description": "LLM-as-a-Judge module. Submits (query, generated_answer, ground_truth) to GPT-OSS-20B and parses 1–5 Likert score. Used for Experiment 2 evaluation.",
+        "classes": ["LLMJudge"],
+        "public_methods": {
+          "LLMJudge": [
+            "__init__(self, model: str = 'gpt-oss-20b', api_base: str, api_key: str) -> None",
+            "score(self, query: str, answer: str, ground_truth: str) -> int  # 1-5",
+            "score_batch(self, records: list[dict]) -> list[int]",
+            "_parse_score(self, response_text: str) -> int"
+          ]
+        },
+        "sir_mapping": "SIR: LLM-as-a-Judge (5-point Likert)"
+      },
+      {
+        "path": "src/rag_chunking_bench/evaluation/metrics.py",
+        "description": "Metric computation. Implements EQ4 (relevance label), EQ5 (Accuracy@k), EQ6 (Recall@k) exactly as defined in the paper.",
+        "classes": ["RetrievalMetrics"],
+        "public_methods": {
+          "RetrievalMetrics": [
+            "accuracy_at_k(retrieved_chunks: list[str], relevant_chunks: list[str], k: int) -> float  # EQ5",
+            "recall_at_k(retrieved_chunks: list[str], relevant_chunks: list[str], k: int) -> float   # EQ6",
+            "is_relevant(chunk: str, answer_span: str) -> bool  # EQ4 — overlap check",
+            "compute_all(results: list[dict], k_acc: int = 5, k_rec: int = 10) -> dict"
+          ]
+        },
+        "sir_mapping": "SIR EQ4, EQ5, EQ6"
+      },
+      {
+        "path": "src/rag_chunking_bench/evaluation/reporter.py",
+        "description": "Aggregates per-query results into per-method, per-dataset tables. Outputs CSV and JSON matching Tables 1, 2, 3, 4 from the paper. Also logs chunking time.",
+        "classes": ["ResultReporter"],
+        "public_methods": {
+          "ResultReporter": [
+            "__init__(self, output_dir: str) -> None",
+            "record(self, method: str, dataset: str, metric: str, value: float) -> None",
+            "record_timing(self, method: str, dataset: str, seconds: float) -> None",
+            "export_csv(self) -> None",
+            "export_json(self) -> None",
+            "print_summary_table(self) -> None"
+          ]
+        },
+        "sir_mapping": "SIR: Tables 1-4 reproduction"
+      },
+      {
+        "path": "src/rag_chunking_bench/data/dataset_loader.py",
+        "description": "Dataset loading utilities. Downloads/loads each of the 11 dataset configurations (including merged stress-test variants). Returns standardized (document, query, answer_span) records.",
+        "classes": ["DatasetLoader"],
+        "public_methods": {
+          "DatasetLoader": [
+            "__init__(self, data_dir: str, dataset_name: str) -> None",
+            "load_documents(self) -> list[str]",
+            "load_queries(self) -> list[dict]  # {query_id, query, answer_span, relevant_doc_id}",
+            "create_merged_variant(self, documents: list[str]) -> str  # single concatenated doc"
+          ]
+        },
+        "sir_mapping": "SIR: Datasets — all 11 configurations"
+      },
+      {
+        "path": "src/rag_chunking_bench/pipeline/chunking_pipeline.py",
+        "description": "Orchestrates the full chunking → embedding → indexing sequence for one (method, dataset) pair. Enforces the 48-hour timeout. Catches and logs T/S failure markers.",
+        "classes": ["ChunkingPipeline"],
+        "public_methods": {
+          "ChunkingPipeline": [
+            "__init__(self, chunker: BaseChunker, embedder: ChunkEmbedder, timeout_hours: float = 48.0) -> None",
+            "run(self, documents: list[str]) -> tuple[FAISSChunkIndex, list[list[str]], float]  # index, all_chunks, elapsed_s",
+            "_run_with_timeout(self, fn, *args) -> any"
+          ]
+        },
+        "sir_mapping": "SIR: 48h time limit enforcement; T/S failure markers"
+      },
+      {
+        "path": "src/rag_chunking_bench/pipeline/eval_pipeline.py",
+        "description": "Orchestrates Experiment 1 (retrieval) and Experiment 2 (end-to-end generation) for a given (chunker, dataset) pair. Calls metrics and reporter.",
+        "classes": ["EvalPipeline"],
+        "public_methods": {
+          "EvalPipeline": [
+            "__init__(self, retriever: RAGRetriever, metrics: RetrievalMetrics, reporter: ResultReporter, generator: RAGGenerator | None = None, judge: LLMJudge | None = None) -> None",
+            "run_retrieval_eval(self, queries: list[dict], method_name: str, dataset_name: str) -> dict",
+            "run_generation_eval(self, queries: list[dict], method_name: str, dataset_name: str) -> dict"
+          ]
+        },
+        "sir_mapping": "SIR: EXP1 + EXP2"
+      },
+      {
+        "path": "src/rag_chunking_bench/utils/config.py",
+        "description": "Config dataclasses and YAML loader. Parses config.yaml into typed Python objects.",
+        "classes": ["BenchConfig", "ChunkerConfig", "EmbedderConfig", "EvalConfig", "GeneratorConfig"],
+        "public_methods": {
+          "BenchConfig": [
+            "from_yaml(path: str) -> BenchConfig",
+            "to_yaml(self, path: str) -> None"
+          ]
+        },
+        "sir_mapping": "All SIR hyperparameters"
+      },
+      {
+        "path": "src/rag_chunking_bench/utils/timing.py",
+        "description": "Context manager and decorator for measuring chunking wall-clock time. Used by ChunkingPipeline.",
+        "classes": ["Timer"],
+        "public_methods": {
+          "Timer": [
+            "__enter__(self) -> Timer",
+            "__exit__(self, ...) -> None",
+            "elapsed_seconds(self) -> float"
+          ]
+        },
+        "sir_mapping": "SIR: Table 3 — chunking time per method"
+      },
+      {
+        "path": "src/rag_chunking_bench/utils/text_utils.py",
+        "description": "Shared NLP utilities: sentence splitting (NLTK punkt), token counting (tiktoken), answer span overlap check.",
+        "classes": [],
+        "functions": [
+          "split_sentences(text: str) -> list[str]",
+          "count_tokens(text: str, encoding: str = 'cl100k_base') -> int",
+          "spans_overlap(span_a: str, span_b: str) -> bool"
+        ],
+        "sir_mapping": "SIR EQ4 overlap, TextTiling sentence alignment"
+      }
+    ]
+  },
+
+  "data_flow_specification": {
+    "pipeline_A_chunking_and_indexing": {
+      "name": "Chunking + Indexing Pass",
+      "description": "Offline pass: convert documents to a searchable index",
+      "steps": [
+        "INPUT: documents: list[str]  ← raw text from DatasetLoader",
+        "START TIMER → Timer.__enter__()",
+        "FOR each doc in documents:",
+        "  chunks: list[str] = chunker.chunk(doc)     ← EQ2: f_theta(D) -> C",
+        "  all_chunks.extend(chunks)",
+        "STOP TIMER → elapsed_seconds",
+        "embeddings: np.ndarray[N_total, 1024] = embedder.encode(all_chunks)  ← E(c)",
+        "index: FAISSChunkIndex = FAISSChunkIndex.build(all_chunks, embeddings)",
+        "RETURN (index, all_chunks, elapsed_seconds)"
+      ]
+    },
+    "pipeline_B_retrieval_eval": {
+      "name": "Experiment 1: Evidence Retrieval",
+      "steps": [
+        "INPUT: query_record: dict {query: str, answer_span: str, relevant_doc_id: str}",
+        "query_emb: np.ndarray[1024] = embedder.encode_query(query)  ← E(q)",
+        "candidates: list[str], scores: list[float] = index.search(query_emb, k=10)  ← EQ3",
+        "reranked: list[str] = reranker.rerank(query, candidates, top_k=10)",
+        "# Experiment 1 metrics (no generation):",
+        "acc5 = metrics.accuracy_at_k(reranked, relevant_chunks, k=5)    ← EQ5",
+        "rec10 = metrics.recall_at_k(reranked, relevant_chunks, k=10)     ← EQ6",
+        "reporter.record(method, dataset, 'Accuracy@5', acc5)",
+        "reporter.record(method, dataset, 'Recall@10', rec10)"
+      ]
+    },
+    "pipeline_C_generation_eval": {
+      "name": "Experiment 2: End-to-End RAG",
+      "steps": [
+        "INPUT: query_record: dict {query, answer_span, ground_truth_answer}",
+        "query_emb: np.ndarray[1024] = embedder.encode_query(query)",
+        "candidates: list[str] = index.search(query_emb, k=10)",
+        "top5: list[str] = reranker.rerank(query, candidates, top_k=5)",
+        "context: str = generator._build_prompt(query, top5)  ← ≤4000 tokens",
+        "answer: str = generator.generate(query, top5)",
+        "score: int = judge.score(query, answer, ground_truth_answer)  ← 1-5 Likert",
+        "reporter.record(method, dataset, 'llm_judge', score)"
+      ]
+    }
+  },
+
+  "configuration_schema": {
+    "config_yaml_template": "configs/config.yaml",
+    "fields": {
+      "chunkers": {
+        "enabled": ["fixed_size", "recursive_semantic", "sequential_hac", "max_min"],
+        "optional": ["texttiling", "graphseg", "lumberchunker", "densex"],
+        "fixed_size": {
+          "chunk_size": 512,
+          "overlap": 50,
+          "sir_confidence": 0.99
+        },
+        "recursive_semantic": {
+          "chunk_size": 512,
+          "overlap": 50,
+          "separators": ["\\n\\n", "\\n", ". ", " "],
+          "sir_confidence": 0.92,
+          "note": "# Default LangChain separators — TODO verify exact config from paper"
+        },
+        "sequential_hac": {
+          "similarity_threshold": 0.85,
+          "max_chunk_tokens": 512,
+          "sir_confidence": 0.88,
+          "note": "# ASSUMED: threshold from Qu et al. 2025 default — TODO verify"
+        },
+        "max_min": {
+          "alpha": 0.5,
+          "sir_confidence": 0.83,
+          "note": "# ASSUMED: alpha from Kiss et al. 2025 default — TODO verify"
+        },
+        "texttiling": {
+          "w": 20,
+          "k": 10,
+          "smoothing_width": 2,
+          "boundary_alignment": "sentence",
+          "sir_confidence": 0.90,
+          "note": "# sentence alignment explicitly stated in paper Section 3"
+        }
+      },
+      "embedding": {
+        "model": "BAAI/bge-m3",
+        "batch_size": 64,
+        "device": "auto",
+        "normalize_embeddings": true,
+        "embedding_dim": 1024,
+        "sir_confidence": 0.90,
+        "note": "# ASSUMED: dim=1024 from bge-m3 spec; normalize=True for cosine"
+      },
+      "reranker": {
+        "model": "BAAI/bge-reranker-v2-m3",
+        "device": "auto",
+        "sir_confidence": 0.99
+      },
+      "retrieval": {
+        "top_k_retrieval": 10,
+        "top_k_accuracy": 5,
+        "top_k_recall": 10,
+        "top_k_generation": 5,
+        "index_type": "cosine",
+        "sir_confidence": 0.99
+      },
+      "generation": {
+        "model": "gpt-oss-20b",
+        "api_base": "${OPENAI_API_BASE}",
+        "api_key": "${OPENAI_API_KEY}",
+        "max_context_tokens": 4000,
+        "sir_confidence": 0.99
+      },
+      "judge": {
+        "model": "gpt-oss-20b",
+        "api_base": "${OPENAI_API_BASE}",
+        "api_key": "${OPENAI_API_KEY}",
+        "scale_min": 1,
+        "scale_max": 5,
+        "sir_confidence": 0.99
+      },
+      "datasets": {
+        "data_dir": "data/",
+        "enabled": ["squad", "triviaqa", "poquad", "nq", "qasper", "gutenqa", "literaryqa", "novelqa"],
+        "include_merged_variants": true,
+        "sir_confidence": 0.97
+      },
+      "pipeline": {
+        "timeout_hours": 48.0,
+        "output_dir": "results/",
+        "sir_confidence": 0.99
+      }
+    }
+  },
+
+  "dependencies_manifest": {
+    "requirements_txt": {
+      "core": [
+        "sentence-transformers==3.0.1",
+        "faiss-cpu==1.8.0",
+        "langchain-text-splitters==0.3.8",
+        "nltk==3.8.1",
+        "spacy==3.7.4",
+        "scipy==1.13.0",
+        "scikit-learn==1.5.0",
+        "numpy==1.26.4",
+        "openai==1.35.0",
+        "tiktoken==0.7.0",
+        "pyyaml==6.0.1",
+        "tqdm==4.66.4",
+        "pandas==2.2.2",
+        "datasets==2.20.0"
+      ],
+      "rationale": {
+        "sentence-transformers": "bge-m3 embedding and bge-reranker-v2-m3",
+        "faiss-cpu": "EQ3 cosine top-k index",
+        "langchain-text-splitters": "FixedSizeChunker and RecursiveSemanticChunker",
+        "nltk": "Sentence tokenization (punkt) for HAC, Max-min, TextTiling",
+        "spacy": "Sentence splitting fallback; TextTiling uses it (also source of S-marker bug)",
+        "scipy": "Agglomerative clustering for SequentialHACChunker",
+        "scikit-learn": "cosine_similarity utility",
+        "openai": "GPT-OSS-20B API calls (generator + judge)",
+        "tiktoken": "Token counting for 4000-token context truncation",
+        "datasets": "HuggingFace datasets for SQuAD, TriviaQA, NQ, Qasper loading"
+      }
+    },
+    "requirements_dev_txt": [
+      "pytest==8.2.0",
+      "pytest-timeout==2.3.1",
+      "pytest-cov==5.0.0",
+      "black==24.4.2",
+      "ruff==0.4.7",
+      "mypy==1.10.0",
+      "ipykernel==6.29.4"
+    ],
+    "environment_yaml": {
+      "name": "rag-chunking-bench",
+      "channels": ["conda-forge", "pytorch"],
+      "python": "3.10",
+      "pip_dependencies": "requirements.txt",
+      "note": "Use faiss-gpu instead of faiss-cpu if CUDA available"
+    }
+  },
+
+  "entrypoints": {
+    "chunk.py": {
+      "description": "Run chunking only for a given method+dataset. Saves chunks to disk and logs timing.",
+      "cli_args": [
+        "--method {fixed_size|recursive_semantic|sequential_hac|max_min|texttiling|...}",
+        "--dataset {squad|triviaqa|poquad|nq|qasper|gutenqa|literaryqa|novelqa}",
+        "--merged (flag: use merged stress-test variant)",
+        "--config configs/config.yaml",
+        "--output_dir results/chunks/"
+      ]
+    },
+    "index.py": {
+      "description": "Build FAISS index from pre-computed chunks.",
+      "cli_args": [
+        "--chunks_dir results/chunks/{method}/{dataset}/",
+        "--output_dir results/indices/",
+        "--config configs/config.yaml"
+      ]
+    },
+    "evaluate.py": {
+      "description": "Run Experiment 1 (retrieval eval: Accuracy@5, Recall@10) given an existing index.",
+      "cli_args": [
+        "--method STR",
+        "--dataset STR",
+        "--index_dir results/indices/",
+        "--config configs/config.yaml",
+        "--output_dir results/eval/"
+      ]
+    },
+    "generate_and_judge.py": {
+      "description": "Run Experiment 2 (end-to-end RAG + LLM judge). Requires OPENAI_API_KEY env var.",
+      "cli_args": [
+        "--method STR",
+        "--dataset STR",
+        "--index_dir results/indices/",
+        "--config configs/config.yaml",
+        "--output_dir results/eval/"
+      ]
+    },
+    "run_full_bench.py": {
+      "description": "Master entrypoint. Runs all stages (chunk→index→eval1→eval2) for all enabled methods and datasets. Respects 48h timeout per combination. Outputs Tables 1-4.",
+      "cli_args": [
+        "--config configs/config.yaml",
+        "--methods [list, default: all enabled in config]",
+        "--datasets [list, default: all enabled in config]",
+        "--skip_generation (flag: skip Experiment 2)",
+        "--output_dir results/",
+        "--resume (flag: skip completed method-dataset pairs)"
+      ]
+    },
+    "report.py": {
+      "description": "Aggregate raw results JSONs into human-readable tables and plots matching the paper.",
+      "cli_args": [
+        "--results_dir results/eval/",
+        "--output_dir results/report/",
+        "--format {markdown|csv|latex}"
+      ]
+    }
+  },
+
+  "docker_spec": {
+    "base_image": "python:3.10-slim",
+    "system_deps": ["build-essential", "git", "curl", "libgomp1"],
+    "python_setup": [
+      "COPY requirements.txt .",
+      "RUN pip install --no-cache-dir -r requirements.txt",
+      "RUN python -m nltk.downloader punkt punkt_tab",
+      "RUN python -m spacy download en_core_web_sm"
+    ],
+    "working_dir": "/workspace",
+    "volumes": ["/workspace/data", "/workspace/results"],
+    "default_cmd": "python run_full_bench.py --config configs/config.yaml",
+    "env_vars": ["OPENAI_API_KEY", "OPENAI_API_BASE"],
+    "note": "For GPU support, switch base to nvidia/cuda:12.1.0-runtime-ubuntu22.04 and install faiss-gpu"
+  },
+
+  "risk_assessment": [
+    {
+      "id": "RISK-01",
+      "severity": "High",
+      "category": "Dataset Access",
+      "description": "GutenQA, LiteraryQA, NovelQA are non-standard datasets not on HuggingFace Hub. GutenQA is from Duarte et al. 2024 (EMNLP), LiteraryQA from Bonomo et al. 2025, NovelQA from Wang et al. 2025. Download scripts must point to ACL Anthology or GitHub releases.",
+      "mitigation": "Provide download_datasets.py with dataset-specific loaders and fallback instructions. Add smoke-test mode with SQuAD only (available via HuggingFace)."
+    },
+    {
+      "id": "RISK-02",
+      "severity": "High",
+      "category": "LLM API Access",
+      "description": "GPT-OSS-20B is referenced as the generator and judge model. This is a non-standard model name — likely an internal/OpenAI-hosted open-source model. Users may not have access to this exact model.",
+      "mitigation": "Abstract generator and judge behind an OpenAI-compatible interface. Config allows substituting any model (gpt-4o, claude, llama via vLLM). Add warning in README: exact reproduction requires GPT-OSS-20B access."
+    },
+    {
+      "id": "RISK-03",
+      "severity": "Medium",
+      "category": "HAC Threshold",
+      "description": "SequentialHACChunker similarity_threshold (0.85) is assumed from publication defaults but not explicitly stated in this paper (Section 3 says 'default hyperparameters from original publications'). Wrong threshold significantly changes chunk granularity.",
+      "mitigation": "Mark as configurable in config.yaml with a clear ASSUMED comment. Expose as CLI arg. Document that users should cross-reference Qu et al. 2025."
+    },
+    {
+      "id": "RISK-04",
+      "severity": "Medium",
+      "category": "Max-Min alpha",
+      "description": "MaxMinChunker's alpha parameter is assumed from Kiss et al. 2025. If the publication uses a different default, chunking behavior and results will diverge.",
+      "mitigation": "Same as RISK-03: configurable + ASSUMED comment + cross-reference."
+    },
+    {
+      "id": "RISK-05",
+      "severity": "Medium",
+      "category": "spaCy Memory (S-marker reproduction)",
+      "description": "Reproducing the S (spaCy memory error) behavior on documents > 1M chars is intentional for the benchmark but may silently succeed on machines with more RAM, giving different results from the paper.",
+      "mitigation": "Log document length. Add optional --force_spacy_limit flag that artificially caps memory for fair comparison. Document this in README."
+    },
+    {
+      "id": "RISK-06",
+      "severity": "Medium",
+      "category": "PIRB Evaluation Framework",
+      "description": "The paper uses PIRB as the evaluation protocol (accuracy/recall framework), but PIRB is a Polish IR benchmark. The relationship between PIRB's eval harness and the non-Polish datasets (SQuAD, TriviaQA) is ambiguous (SIR ambiguity: confidence 0.70).",
+      "mitigation": "Implement accuracy_at_k and recall_at_k as standalone metric functions (EQ5, EQ6) independent of PIRB's tooling. This is faithful to the math regardless of the evaluation framework used."
+    },
+    {
+      "id": "RISK-07",
+      "severity": "Low",
+      "category": "Hardware Discrepancy",
+      "description": "Paper runs on H100 96GB GPUs with 1006GB RAM. Most users will have significantly less compute, affecting runtime but not correctness. The 48h timeout may trigger differently.",
+      "mitigation": "Implement resumable pipeline (--resume flag). Log elapsed time prominently. Adjust timeout via config."
+    },
+    {
+      "id": "RISK-08",
+      "severity": "Low",
+      "category": "LumberChunker / DenseX / GraphSeg",
+      "description": "These three methods are not part of the core robust-methods set. Their original implementations require additional dependencies (LLM API, spaCy graph ops). Partial reproduction is expected.",
+      "mitigation": "Place in chunkers/experimental/ subfolder. Document expected T/S failures per the paper. Include stub classes that raise NotImplementedError with paper citation."
+    }
+  ],
+
+  "file_tree_summary": [
+    "src/rag_chunking_bench/__init__.py",
+    "src/rag_chunking_bench/chunkers/__init__.py",
+    "src/rag_chunking_bench/chunkers/base.py",
+    "src/rag_chunking_bench/chunkers/fixed_size.py",
+    "src/rag_chunking_bench/chunkers/recursive_semantic.py",
+    "src/rag_chunking_bench/chunkers/sequential_hac.py",
+    "src/rag_chunking_bench/chunkers/max_min.py",
+    "src/rag_chunking_bench/chunkers/texttiling.py",
+    "src/rag_chunking_bench/chunkers/experimental/__init__.py",
+    "src/rag_chunking_bench/chunkers/experimental/graphseg.py",
+    "src/rag_chunking_bench/chunkers/experimental/lumberchunker.py",
+    "src/rag_chunking_bench/chunkers/experimental/densex.py",
+    "src/rag_chunking_bench/embedding/embedder.py",
+    "src/rag_chunking_bench/embedding/reranker.py",
+    "src/rag_chunking_bench/retrieval/index.py",
+    "src/rag_chunking_bench/retrieval/retriever.py",
+    "src/rag_chunking_bench/generation/generator.py",
+    "src/rag_chunking_bench/generation/judge.py",
+    "src/rag_chunking_bench/evaluation/metrics.py",
+    "src/rag_chunking_bench/evaluation/reporter.py",
+    "src/rag_chunking_bench/data/dataset_loader.py",
+    "src/rag_chunking_bench/pipeline/chunking_pipeline.py",
+    "src/rag_chunking_bench/pipeline/eval_pipeline.py",
+    "src/rag_chunking_bench/utils/config.py",
+    "src/rag_chunking_bench/utils/timing.py",
+    "src/rag_chunking_bench/utils/text_utils.py",
+    "configs/config.yaml",
+    "chunk.py",
+    "index.py",
+    "evaluate.py",
+    "generate_and_judge.py",
+    "run_full_bench.py",
+    "report.py",
+    "docker/Dockerfile",
+    "requirements.txt",
+    "requirements-dev.txt",
+    "environment.yaml",
+    "README.md",
+    "data/download_datasets.py"
+  ],
+
+  "total_source_files": 39
+}
