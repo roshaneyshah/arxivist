@@ -1,0 +1,30 @@
+{
+  "paper_id": "arxiv_1706_03762",
+  "paper_title": "Attention Is All You Need",
+  "current_stage": 5,
+  "stages_completed": [
+    "stage_1_paper_parser",
+    "stage_2_sir_registry",
+    "stage_3_architecture_planner",
+    "stage_4_code_generator"
+  ],
+  "sir_path": "sir-registry/arxiv_1706_03762/sir.json",
+  "repo_path": "paper-repos/arxiv_1706_03762/",
+  "artifacts": {
+    "sir": "sir-registry/arxiv_1706_03762/sir.json",
+    "architecture_plan": "sir-registry/arxiv_1706_03762/architecture_plan.json",
+    "repo_initialized": true,
+    "notebook_path": null,
+    "comparison_report": null
+  },
+  "confidence_flags": {
+    "overall_sir_confidence": 0.93,
+    "human_review_required": false
+  },
+  "human_review_required": false,
+  "loop_count": 0,
+  "created_at": "2026-05-31T00:00:00Z",
+  "last_updated": "2026-05-31T00:00:00Z",
+  "paused_for_user_review": false,
+  "pause_reason": "User requested SIR review before Stage 3 proceeds."
+}

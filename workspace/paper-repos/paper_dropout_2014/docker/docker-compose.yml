@@ -1,0 +1,74 @@
+version: "3.8"
+
+services:
+  train:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: dropout-repro:latest
+    container_name: dropout_train
+    command: >
+      python train.py
+      --config configs/mnist_3layer_1024.yaml
+      --run-name mnist_3layer_1024_dropout
+    volumes:
+      - ../data:/workspace/data
+      - ../checkpoints:/workspace/checkpoints
+      - ../logs:/workspace/logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  evaluate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: dropout-repro:latest
+    container_name: dropout_evaluate
+    command: >
+      python evaluate.py
+      --checkpoint checkpoints/mnist_3layer_1024_dropout/best.pt
+      --config configs/mnist_3layer_1024.yaml
+      --report-sparsity
+    volumes:
+      - ../data:/workspace/data
+      - ../checkpoints:/workspace/checkpoints
+      - ../logs:/workspace/logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  notebook:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: dropout-repro:latest
+    container_name: dropout_notebook
+    command: >
+      jupyter notebook
+      --ip=0.0.0.0
+      --port=8888
+      --no-browser
+      --allow-root
+      --NotebookApp.token=''
+    ports:
+      - "8888:8888"
+    volumes:
+      - ../notebooks:/workspace/notebooks
+      - ../data:/workspace/data
+      - ../checkpoints:/workspace/checkpoints
+      - ../logs:/workspace/logs
+    environment:
+      - PYTHONUNBUFFERED=1

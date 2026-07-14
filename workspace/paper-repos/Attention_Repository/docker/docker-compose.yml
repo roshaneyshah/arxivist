@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  train:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: transformer-aiayn:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ../data:/workspace/transformer/data
+      - ../checkpoints:/workspace/transformer/checkpoints
+      - ../results:/workspace/transformer/results
+    command: python train.py --config configs/base.yaml
+
+  evaluate:
+    image: transformer-aiayn:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ../data:/workspace/transformer/data
+      - ../checkpoints:/workspace/transformer/checkpoints
+      - ../results:/workspace/transformer/results
+    command: >
+      python evaluate.py
+        --config configs/base.yaml
+        --checkpoint checkpoints/checkpoint_averaged.pt
+
+  notebook:
+    image: transformer-aiayn:latest
+    ports:
+      - "8888:8888"
+    volumes:
+      - ../notebooks:/workspace/transformer/notebooks
+      - ../data:/workspace/transformer/data
+      - ../checkpoints:/workspace/transformer/checkpoints
+    command: >
+      jupyter notebook
+        --ip=0.0.0.0
+        --no-browser
+        --allow-root
+        --notebook-dir=/workspace/transformer/notebooks

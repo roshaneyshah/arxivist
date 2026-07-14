@@ -1,0 +1,81 @@
+# ============================================================
+# Regularizer Comparison Config — Table 9 in paper
+# Runs all 6 regularization methods on MNIST (784-1024-1024-2048-10 arch)
+# Expected results:
+#   L2                          : 1.62%
+#   L2 + L1                     : 1.60%
+#   L2 + KL-sparsity            : 1.55%
+#   Max-norm                    : 1.35%
+#   Dropout + L2                : 1.25%
+#   Dropout + Max-norm (PRIMARY): 1.05%
+# ============================================================
+
+model:
+  input_dim: 784
+  hidden_dims: [1024, 1024, 2048]  # Section 6.5: architecture 784-1024-1024-2048-10
+  num_classes: 10
+  activation: "relu"
+  use_dropout: true                 # toggled per run by ablation script
+  p_hidden: 0.5
+  p_input: 0.8
+  max_norm_c: 2.0                   # ASSUMED for consistency; tuned per method in paper
+
+training:
+  optimizer: "sgd"
+  learning_rate: 0.01               # ASSUMED
+  momentum: 0.95
+  n_weight_updates: 1000000
+  batch_size: 128                   # ASSUMED
+  seed: 42
+  log_interval: 1000
+
+ablation:
+  mode: "regularizer_comparison"
+  methods:
+    - name: "l2"
+      use_dropout: false
+      use_max_norm: false
+      weight_decay: 0.0001
+      kl_sparsity: false
+    - name: "l2_l1"
+      use_dropout: false
+      use_max_norm: false
+      weight_decay: 0.0001
+      l1_weight: 0.0001
+      kl_sparsity: false
+    - name: "l2_kl_sparsity"
+      use_dropout: false
+      use_max_norm: false
+      weight_decay: 0.0001
+      kl_sparsity: true
+      kl_target: 0.05
+    - name: "max_norm_only"
+      use_dropout: false
+      use_max_norm: true
+      weight_decay: 0.0
+      max_norm_c: 2.0
+    - name: "dropout_l2"
+      use_dropout: true
+      use_max_norm: false
+      weight_decay: 0.0001
+    - name: "dropout_max_norm"
+      use_dropout: true
+      use_max_norm: true
+      weight_decay: 0.0
+      max_norm_c: 2.0
+
+data:
+  dataset: "mnist"
+  data_dir: "./data"
+  val_size: 10000
+  num_workers: 0                  # 0 = required on Windows; set to 4 on Linux/Mac
+  normalize_mean: 0.1307
+  normalize_std: 0.3081
+
+hardware:
+  device: "auto"
+
+experiment:
+  run_name: "mnist_regularizer_comparison"
+  output_dir: "./checkpoints"
+  log_dir: "./logs"

@@ -1,20 +1,30 @@
+# ArXivist — runtime-generated workspace contents are never committed
+workspace/sir-registry/*/
+workspace/paper-repos/*/
+
+# Keep the bootstrapped empty files that scaffold the workspace
+!workspace/sir-registry/.gitkeep
+!workspace/sir-registry/global_index.json
+!workspace/paper-repos/.gitkeep
+!workspace/.gitkeep
+
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
 dist/
 build/
+.venv/
+venv/
 .env
-checkpoints/*.pt
-checkpoints/*.pth
-checkpoints/*.ckpt
-data/raw/
-data/processed/
-data/genomic_benchmarks/
-data/nucleotide_transformer/
-data/hg38/
-results/*.csv
-results/*.json
-*.log
+
+# Editors
 .DS_Store
-wandb/
-lightning_logs/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Packaging artefacts
+*.skill
+*.zip

@@ -1,0 +1,347 @@
+{
+  "paper_id": "arxiv_2401_006249",
+  "plan_version": 1,
+  "created_at": "2026-07-07T00:00:00Z",
+  "framework": {
+    "primary": "pytorch",
+    "python_version": "3.10+",
+    "cuda_required": false,
+    "cuda_min_version": "11.8",
+    "use_huggingface": false,
+    "config_library": "yaml",
+    "reasoning": "Paper does not name a framework explicitly, but the GAT architecture (Velickovic et al. 2017) with custom edge-aware attention maps directly onto PyTorch Geometric's MessagePassing API, the domain convention for GNN research code. YAML chosen over Hydra/OmegaConf for a self-contained, dependency-light config system since the paper's hyperparameter grid (Table 8-10) is flat and does not require hierarchical composition."
+  },
+  "module_hierarchy": [
+    {
+      "path": "src/spotv2net/__init__.py",
+      "description": "Package init, version string.",
+      "sir_modules_mapped": [],
+      "classes": []
+    },
+    {
+      "path": "src/spotv2net/models/gat_layer.py",
+      "description": "Edge-aware GAT layer implementing the modified attention mechanism of Sec. 5 (SIR modules: GATLayer, MultiHeadAttention).",
+      "sir_modules_mapped": ["GATLayer (edge-aware)", "MultiHeadAttention"],
+      "classes": [
+        {
+          "name": "EdgeAwareGATLayer",
+          "base_class": "torch.nn.Module",
+          "public_methods": [
+            {"name": "__init__", "signature": "(in_dim: int, out_dim: int, edge_dim: int, heads: int = 4, concat: bool = True, negative_slope: float = 0.1, dropout: float = 0.1, attn_dropout: float = 0.1)", "returns": "None"},
+            {"name": "forward", "signature": "(x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor) -> torch.Tensor", "returns": "node embeddings [N, heads*out_dim] or [N, out_dim]"}
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/spotv2net/models/spotv2net.py",
+      "description": "Full SpotV2Net model: stacks EdgeAwareGATLayer modules per the tuned 2-hidden-layer architecture and applies the final linear prediction head (SIR modules: GATStack, PredictionHead). Supports a `use_edge_features` flag to reproduce the SpotV2Net-NE ablation.",
+      "sir_modules_mapped": ["GATStack", "PredictionHead", "InputGraphConstruction"],
+      "classes": [
+        {
+          "name": "SpotV2Net",
+          "base_class": "torch.nn.Module",
+          "public_methods": [
+            {"name": "__init__", "signature": "(node_in_dim: int, edge_in_dim: int, hidden_dims: list, heads: int = 4, output_dim: int = 1, use_edge_features: bool = True, dropout: float = 0.1, attn_dropout: float = 0.1, negative_slope: float = 0.1)", "returns": "None"},
+            {"name": "forward", "signature": "(x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor) -> torch.Tensor", "returns": "predictions [N, output_dim]"}
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/spotv2net/models/har_spot.py",
+      "description": "Panel HAR-Spot baseline (App. A.1) implemented as a linear regression over engineered lag-average features.",
+      "sir_modules_mapped": ["HAR-Spot panel model (baseline)"],
+      "classes": [
+        {"name": "HARSpotModel", "base_class": "object", "public_methods": [
+          {"name": "fit", "signature": "(X: np.ndarray, y: np.ndarray) -> None", "returns": "None"},
+          {"name": "predict", "signature": "(X: np.ndarray) -> np.ndarray", "returns": "predictions"}
+        ]}
+      ]
+    },
+    {
+      "path": "src/spotv2net/models/lstm_baseline.py",
+      "description": "LSTM baseline (App. A.3) accepting only volatility/co-volatility sequences (no vol-of-vol), per the paper's stated input restriction.",
+      "sir_modules_mapped": [],
+      "classes": [
+        {"name": "LSTMBaseline", "base_class": "torch.nn.Module", "public_methods": [
+          {"name": "__init__", "signature": "(input_dim: int, hidden_dims: list, output_dim: int = 1, dropout: float = 0.3)", "returns": "None"},
+          {"name": "forward", "signature": "(x: torch.Tensor) -> torch.Tensor", "returns": "predictions [B, output_dim]"}
+        ]}
+      ]
+    },
+    {
+      "path": "src/spotv2net/data/fourier_estimators.py",
+      "description": "Non-parametric Fourier (Malliavin-Mancino) estimators for spot volatility, co-volatility, volatility-of-volatility, co-volatility-of-volatility (Sec. 6). Flagged low-confidence for exact cutting-frequency reproduction (SIR ambiguity).",
+      "sir_modules_mapped": ["Fourier co-volatility coefficient estimator", "Fourier-Fejer spot volatility/co-volatility inversion", "Fourier co-volatility-of-volatility and volatility-of-volatility estimator"],
+      "classes": [
+        {"name": "FourierSpotEstimator", "base_class": "object", "public_methods": [
+          {"name": "estimate_volatility", "signature": "(log_returns: np.ndarray, Nv: int, Mv: int, grid: np.ndarray) -> np.ndarray", "returns": "spot volatility path"},
+          {"name": "estimate_covolatility", "signature": "(log_returns_i: np.ndarray, log_returns_j: np.ndarray, Nc: int, Mc: int, grid: np.ndarray) -> np.ndarray", "returns": "spot co-volatility path"},
+          {"name": "estimate_vol_of_vol", "signature": "(log_returns: np.ndarray, Nv: int, Sv: int, Lv: int, grid: np.ndarray) -> np.ndarray", "returns": "spot volatility-of-volatility path"},
+          {"name": "estimate_covol_of_vol", "signature": "(log_returns_i: np.ndarray, log_returns_j: np.ndarray, Nc: int, Sc: int, Lc: int, grid: np.ndarray) -> np.ndarray", "returns": "spot co-volatility-of-volatility path"}
+        ]}
+      ]
+    },
+    {
+      "path": "src/spotv2net/data/graph_builder.py",
+      "description": "Builds per-timestamp fully-connected graph tensors (node/edge feature matrices with lag stacking) from Fourier estimate time series (SIR module: InputGraphConstruction, Eq. 1-2).",
+      "sir_modules_mapped": ["InputGraphConstruction"],
+      "classes": [
+        {"name": "GraphSnapshotBuilder", "base_class": "object", "public_methods": [
+          {"name": "build_node_features", "signature": "(vol_df: 'pandas.DataFrame', covol_df: 'pandas.DataFrame', num_lags: int, timestamp_idx: int) -> np.ndarray", "returns": "node feature matrix [N, M]"},
+          {"name": "build_edge_features", "signature": "(vov_df: 'pandas.DataFrame', covov_df: 'pandas.DataFrame', num_lags: int, timestamp_idx: int) -> np.ndarray", "returns": "edge feature matrix [N*(N-1)/2, E]"},
+          {"name": "fully_connected_edge_index", "signature": "(num_nodes: int) -> np.ndarray", "returns": "edge_index [2, N*(N-1)]"}
+        ]}
+      ]
+    },
+    {
+      "path": "src/spotv2net/data/dataset.py",
+      "description": "PyTorch Geometric-style Dataset yielding per-timestamp graph snapshots for train/val/test splits per Table 1's date ranges.",
+      "sir_modules_mapped": [],
+      "classes": [
+        {"name": "SpotVolGraphDataset", "base_class": "torch.utils.data.Dataset", "public_methods": [
+          {"name": "__init__", "signature": "(data_dir: str, split: str, num_lags: int, horizon: int = 1, use_edge_features: bool = True)", "returns": "None"},
+          {"name": "__len__", "signature": "() -> int", "returns": "number of graph snapshots"},
+          {"name": "__getitem__", "signature": "(idx: int) -> dict", "returns": "{'x','edge_index','edge_attr','y'}"}
+        ]}
+      ]
+    },
+    {
+      "path": "src/spotv2net/data/transforms.py",
+      "description": "Feature standardization (fit on train split only) and jump-filtering (Sec. 7.1 footnote 7, beta=0.5, alpha=0.5).",
+      "sir_modules_mapped": [],
+      "classes": [
+        {"name": "StandardScalerTransform", "base_class": "object", "public_methods": [
+          {"name": "fit", "signature": "(X: np.ndarray) -> None", "returns": "None"},
+          {"name": "transform", "signature": "(X: np.ndarray) -> np.ndarray", "returns": "scaled features"}
+        ]},
+        {"name": "JumpFilter", "base_class": "object", "public_methods": [
+          {"name": "filter", "signature": "(returns: np.ndarray, T: float, n: int, beta: float = 0.5, alpha: float = 0.5) -> np.ndarray", "returns": "jump-filtered returns"}
+        ]}
+      ]
+    },
+    {
+      "path": "src/spotv2net/training/losses.py",
+      "description": "MSE and QLIKE loss functions (Eq. 4/5/7/8).",
+      "sir_modules_mapped": ["MSE loss (aggregate, single-step)", "QLIKE loss (aggregate, single-step)", "MSE / QLIKE (multi-step, functional)"],
+      "classes": [
+        {"name": "QLIKELoss", "base_class": "torch.nn.Module", "public_methods": [
+          {"name": "forward", "signature": "(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor", "returns": "scalar loss"}
+        ]}
+      ]
+    },
+    {
+      "path": "src/spotv2net/training/trainer.py",
+      "description": "Training loop: epoch iteration, checkpointing (best validation MSE), logging, seed control, dry-run/debug support.",
+      "sir_modules_mapped": [],
+      "classes": [
+        {"name": "Trainer", "base_class": "object", "public_methods": [
+          {"name": "__init__", "signature": "(model: 'torch.nn.Module', train_loader, val_loader, config: dict) -> None", "returns": "None"},
+          {"name": "fit", "signature": "(epochs: int) -> dict", "returns": "training history"},
+          {"name": "save_checkpoint", "signature": "(path: str, is_best: bool = False) -> None", "returns": "None"}
+        ]}
+      ]
+    },
+    {
+      "path": "src/spotv2net/evaluation/metrics.py",
+      "description": "MSE, QLIKE aggregate metrics; Diebold-Mariano test; Model Confidence Set wrapper (Sec. 7.2).",
+      "sir_modules_mapped": [],
+      "classes": [
+        {"name": "EvaluationMetrics", "base_class": "object", "public_methods": [
+          {"name": "mse", "signature": "(pred: np.ndarray, target: np.ndarray) -> float", "returns": "MSE"},
+          {"name": "qlike", "signature": "(pred: np.ndarray, target: np.ndarray) -> float", "returns": "QLIKE"},
+          {"name": "diebold_mariano", "signature": "(errors_a: np.ndarray, errors_b: np.ndarray) -> dict", "returns": "{'stat','pvalue'}"}
+        ]}
+      ]
+    },
+    {
+      "path": "src/spotv2net/evaluation/explainer.py",
+      "description": "GNNExplainer wrapper for per-node subgraph interpretation (Sec. 7.3).",
+      "sir_modules_mapped": [],
+      "classes": [
+        {"name": "SpotV2NetExplainer", "base_class": "object", "public_methods": [
+          {"name": "explain_node", "signature": "(model: 'torch.nn.Module', graph: dict, node_idx: int, top_k: int = 5) -> dict", "returns": "influential subgraph nodes/edges"}
+        ]}
+      ]
+    },
+    {
+      "path": "src/spotv2net/utils/config.py",
+      "description": "YAML config loading, validation, and global seeding (Python/NumPy/PyTorch).",
+      "sir_modules_mapped": [],
+      "classes": [
+        {"name": "Config", "base_class": "object", "public_methods": [
+          {"name": "load", "signature": "(path: str) -> dict", "returns": "parsed, validated config dict"},
+          {"name": "set_seed", "signature": "(seed: int, deterministic: bool = False) -> None", "returns": "None"}
+        ]}
+      ]
+    }
+  ],
+  "tensor_flows": [
+    {
+      "name": "SpotV2Net forward pass (single-step)",
+      "input": {"name": "x, edge_index, edge_attr", "shape": "x:[30,M], edge_attr:[870,E]", "dtype": "float32"},
+      "output": {"name": "y_hat", "shape": "[30,1]", "dtype": "float32"},
+      "steps": [
+        "x: [30, M] float32 <- node features (contemporaneous + L lags of vol/co-vol)",
+        "edge_attr: [30*29, E] float32 <- edge features (contemporaneous + L lags of vol-of-vol/co-vol-of-vol)",
+        "x = EdgeAwareGATLayer_1(x, edge_index, edge_attr) -> [30, K*H1] (concat heads), ReLU",
+        "x = EdgeAwareGATLayer_2(x, edge_index, edge_attr_proj) -> [30, H2] (heads averaged), ReLU",
+        "y_hat = Linear(H2 -> 1)(x) -> [30, 1]"
+      ]
+    },
+    {
+      "name": "SpotV2Net forward pass (multi-step / functional)",
+      "input": {"name": "x, edge_index, edge_attr", "shape": "x:[30,M], edge_attr:[870,E]", "dtype": "float32"},
+      "output": {"name": "y_hat", "shape": "[30,14]", "dtype": "float32"},
+      "steps": [
+        "Identical GAT stack to single-step variant",
+        "y_hat = Linear(H2 -> 14)(x) -> [30, 14], joint (non-recursive) forecast over the next trading day's 30-min grid"
+      ]
+    }
+  ],
+  "config_schema": {
+    "model": {
+      "name": "spotv2net",
+      "node_in_dim": "computed from num_lags and num_assets at runtime",
+      "edge_in_dim": "computed from num_lags at runtime",
+      "hidden_dims": [400, 200],
+      "heads": 4,
+      "negative_slope": 0.1,
+      "dropout_architecture": 0.1,
+      "dropout_attention": 0.1,
+      "activation": "relu",
+      "use_edge_features": true,
+      "output_dim": 1,
+      "num_lags": 42
+    },
+    "training": {
+      "loss": "mse",
+      "optimizer": "adamw",
+      "learning_rate": 0.0001,
+      "beta1": "0.9  # ASSUMED: PyTorch default, not specified in paper",
+      "beta2": "0.999  # ASSUMED: PyTorch default, not specified in paper",
+      "weight_decay": "0.01  # ASSUMED: PyTorch default, not specified in paper",
+      "batch_size": 128,
+      "epochs": 120,
+      "lr_schedule": "none  # ASSUMED: no scheduler mentioned in Table 8",
+      "gradient_clip_norm": "null  # ASSUMED: not mentioned in paper",
+      "seed": "42  # ASSUMED: not disclosed in paper"
+    },
+    "data": {
+      "raw_data_dir": "data/raw",
+      "processed_dir": "data/processed",
+      "train_start": "2020-06-01",
+      "train_end": "2022-07-20",
+      "val_start": "2022-07-21",
+      "val_end": "2022-10-14",
+      "test_start": "2022-10-15",
+      "test_end": "2023-05-10",
+      "assets": "DJIA-30 tickers",
+      "grid_minutes": 30,
+      "jump_filter_beta": 0.5,
+      "jump_filter_alpha": 0.5
+    },
+    "evaluation": {
+      "metrics": ["mse", "qlike"],
+      "mcs_bootstrap_reps": 5000,
+      "dm_test_significance": 0.05,
+      "gnn_explainer_top_k": 5
+    },
+    "hardware": {
+      "device": "cuda_if_available",
+      "precision": "float32",
+      "num_workers": 4,
+      "deterministic": false
+    }
+  },
+  "dependencies": {
+    "runtime": [
+      {"package": "torch", "version": "2.1.0", "reason": "core deep learning framework"},
+      {"package": "torch-geometric", "version": "2.4.0", "reason": "GAT layer base classes and graph batching utilities"},
+      {"package": "numpy", "version": "1.26.4", "reason": "numerical arrays and Fourier coefficient computation"},
+      {"package": "pandas", "version": "2.1.4", "reason": "time series handling for volatility/co-volatility panels"},
+      {"package": "scikit-learn", "version": "1.3.2", "reason": "StandardScaler, train utilities"},
+      {"package": "xgboost", "version": "2.0.3", "reason": "XGB baseline model (App. A.2)"},
+      {"package": "pyyaml", "version": "6.0.1", "reason": "config loading"},
+      {"package": "scipy", "version": "1.11.4", "reason": "statistical tests (Diebold-Mariano)"},
+      {"package": "matplotlib", "version": "3.8.2", "reason": "figures (Fig. 1-5 reproductions)"},
+      {"package": "optuna", "version": "3.5.0", "reason": "hyperparameter search (Appendix B)"}
+    ],
+    "dev": [
+      {"package": "pytest", "version": "7.4.4"},
+      {"package": "black", "version": "24.1.1"},
+      {"package": "flake8", "version": "7.0.0"},
+      {"package": "jupyter", "version": "1.0.0"}
+    ]
+  },
+  "entrypoints": [
+    {
+      "filename": "train.py",
+      "purpose": "Train SpotV2Net (or a baseline) on the DJIA graph dataset",
+      "cli_args": [
+        {"flag": "--config", "type": "str", "required": true, "default": null, "help": "Path to config YAML"},
+        {"flag": "--resume", "type": "str", "required": false, "default": null, "help": "Checkpoint path to resume from"},
+        {"flag": "--seed", "type": "int", "required": false, "default": 42, "help": "Random seed override"},
+        {"flag": "--debug", "type": "flag", "required": false, "default": false, "help": "Reduce dataset/steps for quick local testing"},
+        {"flag": "--dry-run", "type": "flag", "required": false, "default": false, "help": "Build components without training"}
+      ]
+    },
+    {
+      "filename": "evaluate.py",
+      "purpose": "Evaluate a trained checkpoint on the validation/test split, computing MSE/QLIKE/MCS/DM-test",
+      "cli_args": [
+        {"flag": "--config", "type": "str", "required": true, "default": null, "help": "Path to config YAML"},
+        {"flag": "--checkpoint", "type": "str", "required": true, "default": null, "help": "Path to model checkpoint"},
+        {"flag": "--split", "type": "str", "required": false, "default": "test", "help": "'validation' or 'test'"}
+      ]
+    },
+    {
+      "filename": "inference.py",
+      "purpose": "Run single-timestamp forecast given a config, checkpoint, and a graph snapshot",
+      "cli_args": [
+        {"flag": "--config", "type": "str", "required": true, "default": null, "help": "Path to config YAML"},
+        {"flag": "--checkpoint", "type": "str", "required": true, "default": null, "help": "Path to model checkpoint"},
+        {"flag": "--input", "type": "str", "required": true, "default": null, "help": "Path to a single graph snapshot (npz/json)"}
+      ]
+    }
+  ],
+  "docker_spec": {
+    "base_image": "pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime",
+    "system_deps": ["git", "wget"],
+    "workdir": "/workspace",
+    "default_cmd": "python train.py --help"
+  },
+  "risk_assessment": [
+    {
+      "severity": "High",
+      "description": "Exact Fourier cutting-frequency hyperparameters (Nc, Mc, Sc, Lc, Nvi, Mvi, Svi, Lvi) needed for numerically faithful spot volatility/vol-of-vol estimation are deferred to an external MATLAB library (Sanfelici & Toscano, 2024) and not given in the paper.",
+      "source": "SIR ambiguity: Section 7.1 cutting frequencies",
+      "mitigation": "Implement FourierSpotEstimator as fully configurable; ship literature-typical defaults; add a clear README_data.md note directing users to the FMVol library or Mancino & Recchioni (2015) asymptotic MSE-minimizing frequency formulas for exact reproduction."
+    },
+    {
+      "severity": "High",
+      "description": "Raw 1-second TAQ tick data from WRDS is proprietary and not redistributable.",
+      "source": "SIR evaluation_protocol.datasets",
+      "mitigation": "data/download.py checks for a user-supplied WRDS extract; ships a synthetic data generator for smoke-testing the pipeline without real data."
+    },
+    {
+      "severity": "Medium",
+      "description": "LR schedule, gradient clipping, and AdamW beta/weight-decay values are not disclosed (SIR training_pipeline confidence 0.65).",
+      "source": "SIR implementation_assumptions",
+      "mitigation": "Expose all as config-driven with '# ASSUMED' comments; default to PyTorch AdamW defaults and no scheduler/clipping, easily overridden."
+    },
+    {
+      "severity": "Medium",
+      "description": "Exact interaction between multi-head concatenation and the tuned hidden dims [400,200]/[400,400] is ambiguous (per-head dim vs. total post-concat dim).",
+      "source": "SIR ambiguities[0]",
+      "mitigation": "Model class accepts hidden_dims as the *total* output dimension per layer and internally divides by heads when concat=True, matching the more standard PyG GATConv convention; documented via docstring with the ambiguity noted."
+    },
+    {
+      "severity": "Low",
+      "description": "GNNExplainer's exact optimization hyperparameters (epochs, LR for the mask optimization) are not given.",
+      "source": "SIR evaluation_protocol.special_conditions",
+      "mitigation": "Use PyG's GNNExplainer default optimization settings; document as an assumption in explainer.py docstring."
+    }
+  ]
+}

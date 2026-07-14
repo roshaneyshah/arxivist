@@ -1,0 +1,53 @@
+# FS-GCLSTM Configuration
+# Paper: "Exploiting Supply Chain Interdependencies for Stock Return Prediction"
+# Liu (2023/2025) — arXiv 2303.09406
+
+model:
+  hidden_dim: 64          # ASSUMED: not stated in paper (conf: 0.45) — TODO: verify
+  n_gcn_layers: 2         # Stated: "two GCN layers applied to each processed tensor" (conf: 0.99)
+  n_lstm_layers: 3        # Stated: "three stacked FS-GCLSTM cells" (conf: 0.99)
+  input_seq_len: 60       # Default window length; paper also tests 30, 90, 120 (conf: 0.99)
+  mlp_hidden: 128         # ASSUMED: MLP size not stated (conf: 0.50) — TODO: verify
+  dropout: 0.0            # ASSUMED: not mentioned in paper (conf: 0.55)
+
+training:
+  optimizer: adam
+  lr: 0.001               # Stated: "initial learning rate of 0.001" (conf: 0.99)
+  weight_decay: 1.0e-5    # Stated: "weight decay of 1e-5" (conf: 0.99)
+  lr_schedule: onecycle   # Stated: "OneCycleLR" (conf: 0.99)
+  max_epochs: 30          # Stated: "up to 30 epochs" (conf: 0.99)
+  early_stop_patience: 10 # Stated: "early stopping after 10 epochs without validation improvement" (conf: 0.99)
+  loss: mse               # ASSUMED: paper evaluates MSE but does not state training loss (conf: 0.70)
+  initial_window_days: 3000  # Stated: "initial window covers 3,000 trading days" (conf: 0.99)
+  train_frac: 0.70        # Stated: "70% training" (conf: 0.99)
+  val_frac: 0.20          # Stated: "20% validation" (conf: 0.99)
+  test_frac: 0.10         # Stated: "10% testing" (conf: 0.99)
+  advance_days: 300       # Stated: "window advances by 300 days" (conf: 0.99)
+  log_every_n_steps: 10
+  checkpoint_every_n_steps: 50
+
+data:
+  price_start: "2000-01-01"
+  price_end: "2024-12-31"
+  min_trading_days: 5000  # Stated: "at least 5,000 trading days" (conf: 0.99)
+  lseg_confidence_threshold: 0.20  # Stated: "confidence score above 20%" (conf: 0.99)
+  bidirectional_edges: true        # Stated: "edges are treated as bidirectional" (conf: 0.99)
+  edge_weight: confidence_score    # Stated: "edge weights are set to LSEG confidence scores" (conf: 0.99)
+  transaction_cost_bps: 1          # Stated: "transaction costs set to 1 bps" (conf: 0.99)
+  # Data paths — override with actual LSEG/market data paths
+  price_data_path: "data/prices.parquet"
+  graph_data_path: "data/value_chain.parquet"
+
+evaluation:
+  risk_free_eurostoxx: "EONIA"
+  risk_free_sp500: "USD_LIBOR_ON"
+  portfolio_type: "equal_weight_long_only"
+  rebalance: "daily"
+  sequence_lengths_robustness: [30, 60, 90, 120]
+
+hardware:
+  device: cuda
+  precision: float32
+  seed: 42                # ASSUMED: reproducibility seed not stated
+  num_workers: 4
+  deterministic: false    # Set true for full reproducibility (may slow training)

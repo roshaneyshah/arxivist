@@ -1,0 +1,556 @@
+{
+  "paper_id": "paper_pinns_raissi2017",
+  "plan_version": 1,
+  "created_at": "2026-06-29T00:00:00Z",
+
+  "framework_selection": {
+    "primary_framework": "PyTorch",
+    "version": ">=2.0.0",
+    "python_version": "3.10+",
+    "cuda_required": true,
+    "cuda_minimum": "11.8",
+    "reasoning": "Paper uses TensorFlow 1.x (tf.gradients). Modern reimplementation defaults to PyTorch: torch.autograd.grad provides identical semantics for computing u_t, u_x, u_xx from the network output. torch.optim.LBFGS is natively available. PyTorch is also the dominant framework in Adi's existing DL environment (RTX 3050, CUDA 12.1, PyTorch 2.5.1).",
+    "config_management": "YAML + argparse (lightweight; no Hydra needed for this paper scale)",
+    "huggingface_integration": false
+  },
+
+  "module_hierarchy": {
+    "project_name": "pinns",
+    "root": "paper-repos/paper_pinns_raissi2017/",
+    "structure": {
+      "src/pinns/__init__.py": {
+        "role": "Package init; exposes ContinuousPINN, DiscretePINN",
+        "classes": [],
+        "sir_mapping": "top-level"
+      },
+      "src/pinns/models/mlp.py": {
+        "role": "Core fully-connected MLP used by both continuous and discrete PINNs",
+        "classes": [
+          {
+            "name": "MLP",
+            "parent": "nn.Module",
+            "description": "Configurable depth/width feedforward network with tanh activations. Serves as the shared backbone for SolutionNetwork_u and RK_SolutionNetwork.",
+            "constructor_args": "input_dim: int, output_dim: int, hidden_layers: int, hidden_neurons: int, activation: str = 'tanh'",
+            "public_methods": [
+              "forward(x: Tensor[..., input_dim]) -> Tensor[..., output_dim]"
+            ],
+            "notes": "Xavier uniform init applied in __init__. output_dim=1 for continuous (Burgers), output_dim=2 for complex (Schrodinger), output_dim=q+1 for discrete RK."
+          }
+        ],
+        "sir_mapping": "architecture.variants[*].modules[*].SolutionNetwork_u, RK_SolutionNetwork"
+      },
+      "src/pinns/models/continuous_pinn.py": {
+        "role": "Continuous-time PINN: wraps MLP and computes PDE residuals via autograd",
+        "classes": [
+          {
+            "name": "ContinuousPINN",
+            "parent": "nn.Module",
+            "description": "Wraps an MLP as u(t,x). Exposes u_pred() and f_pred() where f is the PDE residual computed via torch.autograd.grad. The PDE operator is pluggable via a callable.",
+            "constructor_args": "hidden_layers: int, hidden_neurons: int, pde_operator: Callable, output_dim: int = 1",
+            "public_methods": [
+              "forward(t: Tensor[N,1], x: Tensor[N,1]) -> Tensor[N, output_dim]  # u(t,x)",
+              "residual(t: Tensor[Nf,1], x: Tensor[Nf,1]) -> Tensor[Nf, output_dim]  # f(t,x) = u_t + N[u]",
+              "predict(t: Tensor, x: Tensor) -> Tensor  # inference only, no grad"
+            ],
+            "notes": "t and x must have requires_grad=True when passed to residual(). pde_operator receives (u, u_t, u_x, u_xx, ...) and returns the residual tensor."
+          }
+        ],
+        "sir_mapping": "architecture.variants.continuous_pinn"
+      },
+      "src/pinns/models/discrete_pinn.py": {
+        "role": "Discrete-time PINN with implicit Runge-Kutta integration",
+        "classes": [
+          {
+            "name": "DiscretePINN",
+            "parent": "nn.Module",
+            "description": "Multi-output MLP that outputs q+1 quantities (q RK stage solutions + u^{n+1}). The RK tableau is pre-computed at init and stored as buffers (non-trainable). The loss function uses the tableau to enforce RK equations.",
+            "constructor_args": "hidden_layers: int, hidden_neurons: int, q: int, pde_operator: Callable",
+            "public_methods": [
+              "forward(x: Tensor[N,1]) -> Tensor[N, q+1]  # [u^{n+c1},...,u^{n+cq}, u^{n+1}]",
+              "compute_un(x: Tensor) -> Tensor[N, q+1]  # applies RK equations (9) to get u^n_i",
+              "predict_next(x: Tensor) -> Tensor[N,1]  # returns u^{n+1}(x) slice"
+            ],
+            "notes": "Gauss-Legendre nodes/weights computed via numpy.polynomial.legendre.leggauss(q) scaled to [0,1]. Stored as self.register_buffer('A', ...) and self.register_buffer('b', ...). IRK tableau computation is in utils/rk_tableau.py."
+          }
+        ],
+        "sir_mapping": "architecture.variants.discrete_pinn_rk"
+      },
+      "src/pinns/pde/operators.py": {
+        "role": "PDE residual operators for each example equation",
+        "classes": [
+          {
+            "name": "BurgersOperator",
+            "description": "Returns f = u_t + u*u_x - (0.01/pi)*u_xx. Takes u and its autograd derivatives as input.",
+            "public_methods": ["__call__(u, derivs: dict) -> Tensor"]
+          },
+          {
+            "name": "SchrodingerOperator",
+            "description": "Returns f = i*h_t + 0.5*h_xx + |h|^2*h. Operates on real/imag pair. Returns complex residual as [Re(f), Im(f)].",
+            "public_methods": ["__call__(h, derivs: dict) -> Tensor[Nf, 2]"]
+          },
+          {
+            "name": "AllenCahnOperator",
+            "description": "Returns f = u_t - 0.0001*u_xx + 5*u^3 - 5*u.",
+            "public_methods": ["__call__(u, derivs: dict) -> Tensor"]
+          }
+        ],
+        "sir_mapping": "mathematical_spec.equations_by_example"
+      },
+      "src/pinns/data/sampling.py": {
+        "role": "Collocation point sampling and dataset construction",
+        "classes": [
+          {
+            "name": "LatinHypercubeSampler",
+            "description": "Generates LHS samples over a rectangular domain [t_min, t_max] x [x_min, x_max]. Returns torch Tensors.",
+            "public_methods": [
+              "sample(n: int, domain: dict) -> Tuple[Tensor[n,1], Tensor[n,1]]  # returns (t_f, x_f)"
+            ]
+          },
+          {
+            "name": "PDEDataset",
+            "description": "Holds IC/BC data points (t_u, x_u, u_data) and collocation points (t_f, x_f). Used by the Trainer.",
+            "public_methods": [
+              "__init__(ic_bc_data: dict, collocation_data: dict)",
+              "get_ic_bc() -> Tuple[Tensor, Tensor, Tensor]",
+              "get_collocation() -> Tuple[Tensor, Tensor]"
+            ]
+          }
+        ],
+        "sir_mapping": "training_pipeline.collocation_sampling"
+      },
+      "src/pinns/data/exact_solutions.py": {
+        "role": "Reference exact/spectral solutions for evaluation",
+        "classes": [
+          {
+            "name": "BurgersExactSolution",
+            "description": "Generates the exact Burgers solution on a grid using scipy's spectral solver or a pre-saved numpy array. Used only for evaluation.",
+            "public_methods": ["evaluate(t_grid: ndarray, x_grid: ndarray) -> ndarray"]
+          },
+          {
+            "name": "SchrodingerSpectralSolution",
+            "description": "Loads pre-generated spectral reference data (256 Fourier modes, RK4 in time).",
+            "public_methods": ["load(path: str) -> ndarray"]
+          },
+          {
+            "name": "AllenCahnSpectralSolution",
+            "description": "Loads pre-generated spectral reference data (512 Fourier modes).",
+            "public_methods": ["load(path: str) -> ndarray"]
+          }
+        ],
+        "sir_mapping": "evaluation_protocol.datasets"
+      },
+      "src/pinns/training/losses.py": {
+        "role": "All loss functions",
+        "classes": [
+          {
+            "name": "ContinuousPINNLoss",
+            "description": "Computes MSE_u + MSE_f for continuous-time PINN. Also handles Schrodinger variant with MSE_0 + MSE_b + MSE_f.",
+            "public_methods": [
+              "forward(u_pred: Tensor, u_target: Tensor, f_pred: Tensor) -> Tensor  # scalar loss",
+              "forward_schrodinger(u_pred, u_target, h_bc_pred, h_bc_target, f_pred) -> Tensor"
+            ]
+          },
+          {
+            "name": "DiscretePINNLoss",
+            "description": "Computes SSE_n + SSE_b for discrete-time PINN. SSE_n compares all q+1 RK-equation outputs against training snapshot data. SSE_b enforces BCs at boundaries.",
+            "public_methods": [
+              "forward(un_pred: Tensor[Nn, q+1], un_data: Tensor[Nn,1], bc_pred: dict) -> Tensor"
+            ]
+          }
+        ],
+        "sir_mapping": "mathematical_spec.loss_continuous, mathematical_spec.loss_discrete_rk"
+      },
+      "src/pinns/training/trainer.py": {
+        "role": "Training loop orchestration",
+        "classes": [
+          {
+            "name": "Trainer",
+            "description": "Wraps model + optimizer + loss. Runs L-BFGS closure loop. Supports both continuous and discrete PINN modes. Logs loss at each iteration.",
+            "public_methods": [
+              "train(max_iter: int = 50000) -> dict  # returns loss history",
+              "save_checkpoint(path: str) -> None",
+              "load_checkpoint(path: str) -> None"
+            ],
+            "notes": "L-BFGS requires a closure that zeroes grad, computes loss, and calls loss.backward(). Full batch only — no DataLoader needed."
+          }
+        ],
+        "sir_mapping": "training_pipeline.optimizer"
+      },
+      "src/pinns/evaluation/metrics.py": {
+        "role": "Evaluation metrics",
+        "classes": [
+          {
+            "name": "RelativeL2Error",
+            "description": "Computes ||u_pred - u_exact||_2 / ||u_exact||_2 over the full spatio-temporal grid.",
+            "public_methods": [
+              "compute(u_pred: ndarray, u_exact: ndarray) -> float"
+            ]
+          }
+        ],
+        "sir_mapping": "evaluation_protocol.metric"
+      },
+      "src/pinns/utils/rk_tableau.py": {
+        "role": "Gauss-Legendre implicit Runge-Kutta tableau computation",
+        "classes": [
+          {
+            "name": "GaussLegendreTableau",
+            "description": "Computes the Butcher tableau {A, b, c} for q-stage Gauss-Legendre implicit RK. Uses numpy.polynomial.legendre.leggauss for node/weight computation, then solves for A via Vandermonde system.",
+            "public_methods": [
+              "compute(q: int) -> Tuple[ndarray, ndarray, ndarray]  # returns (A [q,q], b [q], c [q])"
+            ],
+            "notes": "This is the most technically non-trivial component. Confidence 0.82 per SIR. Nodes c_i are on [0,1] (shifted from [-1,1]). A is the q×q coefficient matrix satisfying the collocation conditions. Reference: Iserles 2009, Chapter 4."
+          }
+        ],
+        "sir_mapping": "mathematical_spec.runge_kutta_scheme, architecture.ambiguities[1]"
+      },
+      "src/pinns/utils/autograd_helpers.py": {
+        "role": "Convenience wrappers for computing PDE derivatives via autograd",
+        "classes": [
+          {
+            "name": "DerivativeComputer",
+            "description": "Stateless helper that computes first and second-order partial derivatives of a scalar field u w.r.t. t and x using torch.autograd.grad with create_graph=True.",
+            "public_methods": [
+              "compute(u: Tensor, t: Tensor, x: Tensor) -> dict  # returns {'u_t', 'u_x', 'u_xx', 'u_tt'}"
+            ]
+          }
+        ],
+        "sir_mapping": "architecture.variants.continuous_pinn.modules.PhysicsResidualNetwork_f"
+      },
+      "src/pinns/utils/config.py": {
+        "role": "Config loading and validation",
+        "classes": [
+          {
+            "name": "Config",
+            "description": "Loads YAML config, validates required fields, exposes as dot-accessible namespace.",
+            "public_methods": [
+              "load(path: str) -> Config",
+              "to_dict() -> dict"
+            ]
+          }
+        ],
+        "sir_mapping": "N/A (infrastructure)"
+      },
+      "configs/burgers_continuous.yaml": {"role": "Config for Burgers continuous-time experiment"},
+      "configs/schrodinger.yaml": {"role": "Config for Schrodinger continuous-time experiment"},
+      "configs/burgers_discrete.yaml": {"role": "Config for Burgers discrete-time experiment"},
+      "configs/allen_cahn.yaml": {"role": "Config for Allen-Cahn discrete-time experiment"},
+      "train.py": {"role": "Main training entrypoint (CLI)"},
+      "evaluate.py": {"role": "Evaluation entrypoint (CLI)"},
+      "data/generate_reference.py": {"role": "Generates spectral reference solutions for Schrodinger and Allen-Cahn"},
+      "docker/Dockerfile": {"role": "Container spec"},
+      "README.md": {"role": "Setup and reproduction instructions"}
+    }
+  },
+
+  "tensor_flow": {
+    "continuous_pinn_forward": {
+      "description": "Forward pass for continuous-time PINN (Burgers example)",
+      "steps": [
+        "INPUT: t_u [Nu, 1] float32, x_u [Nu, 1] float32  (IC/BC coords, no grad needed)",
+        "INPUT: t_f [Nf, 1] float32, x_f [Nf, 1] float32  (collocation, requires_grad=True)",
+        "STEP 1 — u prediction:  cat([t_u, x_u], dim=-1) → [Nu, 2] → MLP → u_pred [Nu, 1]",
+        "STEP 2 — residual inputs: cat([t_f, x_f], dim=-1) → [Nf, 2] → MLP → u_f [Nf, 1]",
+        "STEP 3 — u_t: autograd.grad(u_f, t_f, create_graph=True) → u_t [Nf, 1]",
+        "STEP 4 — u_x: autograd.grad(u_f, x_f, create_graph=True) → u_x [Nf, 1]",
+        "STEP 5 — u_xx: autograd.grad(u_x, x_f, create_graph=True) → u_xx [Nf, 1]",
+        "STEP 6 — BurgersOperator(u_f, {u_t, u_x, u_xx}) → f_pred [Nf, 1]  = u_t + u_f*u_x - (0.01/pi)*u_xx",
+        "OUTPUT: u_pred [Nu, 1], f_pred [Nf, 1]",
+        "LOSS: MSE_u = mean(|u_pred - u_data|^2)  +  MSE_f = mean(|f_pred|^2)"
+      ]
+    },
+    "schrodinger_forward": {
+      "description": "Forward pass for Schrodinger (complex, multi-output)",
+      "steps": [
+        "INPUT: t_0 [N0,1], x_0 [N0,1] (IC data), t_b [Nb,1] (boundary collocation), t_f [Nf,1], x_f [Nf,1]",
+        "STEP 1 — IC prediction: cat([t_0, x_0]) → MLP(output_dim=2) → h_pred [N0, 2]  (u_real, u_imag)",
+        "STEP 2 — BC evaluation: evaluate MLP at (t_b, x=-5) and (t_b, x=5) → h_left [Nb,2], h_right [Nb,2]",
+        "STEP 3 — BC derivative: autograd.grad to get hx_left [Nb,2], hx_right [Nb,2]",
+        "STEP 4 — Residual: SchrodingerOperator on (t_f, x_f) → f_pred [Nf, 2]  (real/imag parts)",
+        "LOSS: MSE_0 + MSE_b + MSE_f where MSE_b = mean(|h_left - h_right|^2 + |hx_left - hx_right|^2)"
+      ]
+    },
+    "discrete_pinn_forward": {
+      "description": "Forward pass for discrete-time PINN (Burgers, q=500 stages)",
+      "steps": [
+        "INPUT: x_n [Nn, 1]  (spatial coords of training snapshot at t^n)",
+        "INPUT: u_n_data [Nn, 1]  (known solution values at t^n, used in loss)",
+        "STEP 1 — Stage solutions: MLP(input_dim=1, output_dim=q+1)(x_n) → stages [Nn, q+1]",
+        "  stages[:, :q]  = [u^{n+c1}(x), ..., u^{n+cq}(x)]",
+        "  stages[:, q]   = u^{n+1}(x)",
+        "STEP 2 — Compute N[u^{n+cj}] for each j: apply BurgersOperator w.r.t. x only (no t) → N_stages [Nn, q]",
+        "  Note: u_x computed via autograd.grad(stages[:,j], x_n), similarly u_xx",
+        "STEP 3 — Apply RK equations (9): for i = 1..q:  u^n_i = stages[:,i-1] + dt * sum_j(A[i,j] * N_stages[:,j])",
+        "  Also: u^n_{q+1} = stages[:,q] + dt * sum_j(b[j] * N_stages[:,j])",
+        "  Result: un_pred [Nn, q+1]",
+        "STEP 4 — Boundary enforcement: evaluate MLP at x=-1 and x=1 for all stage outputs",
+        "LOSS: SSE_n = sum_j( sum_i( |un_pred[i,j] - u_n_data[i]|^2 ) )  +  SSE_b"
+      ]
+    }
+  },
+
+  "config_schema": {
+    "burgers_continuous": {
+      "model": {
+        "type": "continuous",
+        "pde": "burgers",
+        "hidden_layers": 9,
+        "hidden_neurons": 20,
+        "activation": "tanh",
+        "output_dim": 1
+      },
+      "data": {
+        "Nu": 100,
+        "Nf": 10000,
+        "t_domain": [0.0, 1.0],
+        "x_domain": [-1.0, 1.0],
+        "sampling_method": "lhs",
+        "seed": 42
+      },
+      "training": {
+        "optimizer": "lbfgs",
+        "max_iter": 50000,
+        "tolerance_grad": 1e-7,
+        "tolerance_change": 1e-9,
+        "history_size": 50,
+        "line_search_fn": "strong_wolfe"
+      },
+      "evaluation": {
+        "grid_t": 100,
+        "grid_x": 256,
+        "metric": "relative_l2"
+      },
+      "hardware": {
+        "device": "cuda",
+        "dtype": "float32"
+      }
+    },
+    "burgers_discrete": {
+      "model": {
+        "type": "discrete",
+        "pde": "burgers",
+        "hidden_layers": 4,
+        "hidden_neurons": 50,
+        "activation": "tanh",
+        "q": 500,
+        "dt": 0.8,
+        "t_start": 0.1,
+        "t_end": 0.9
+      },
+      "data": {
+        "Nn": 250,
+        "x_domain": [-1.0, 1.0],
+        "seed": 42
+      },
+      "training": {
+        "optimizer": "lbfgs",
+        "max_iter": 50000,
+        "tolerance_grad": 1e-7,
+        "tolerance_change": 1e-9,
+        "history_size": 50,
+        "line_search_fn": "strong_wolfe"
+      },
+      "evaluation": {
+        "grid_x": 256,
+        "metric": "relative_l2"
+      },
+      "hardware": {
+        "device": "cuda",
+        "dtype": "float32"
+      }
+    },
+    "schrodinger": {
+      "model": {
+        "type": "continuous",
+        "pde": "schrodinger",
+        "hidden_layers": 5,
+        "hidden_neurons": 100,
+        "activation": "tanh",
+        "output_dim": 2
+      },
+      "data": {
+        "N0": 50,
+        "Nb": 50,
+        "Nf": 20000,
+        "t_domain": [0.0, 1.5707963],
+        "x_domain": [-5.0, 5.0],
+        "sampling_method": "lhs",
+        "seed": 42
+      },
+      "training": {
+        "optimizer": "lbfgs",
+        "max_iter": 50000,
+        "tolerance_grad": 1e-7,
+        "tolerance_change": 1e-9,
+        "history_size": 50,
+        "line_search_fn": "strong_wolfe"
+      },
+      "hardware": {
+        "device": "cuda",
+        "dtype": "float32"
+      }
+    },
+    "allen_cahn": {
+      "model": {
+        "type": "discrete",
+        "pde": "allen_cahn",
+        "hidden_layers": 4,
+        "hidden_neurons": 200,
+        "activation": "tanh",
+        "q": 100,
+        "dt": 0.8,
+        "t_start": 0.1,
+        "t_end": 0.9
+      },
+      "data": {
+        "Nn": 200,
+        "x_domain": [-1.0, 1.0],
+        "seed": 42
+      },
+      "training": {
+        "optimizer": "lbfgs",
+        "max_iter": 50000,
+        "tolerance_grad": 1e-7,
+        "tolerance_change": 1e-9,
+        "line_search_fn": "strong_wolfe"
+      },
+      "hardware": {
+        "device": "cuda",
+        "dtype": "float32"
+      }
+    }
+  },
+
+  "dependencies": {
+    "requirements_txt": [
+      "torch>=2.0.0",
+      "numpy>=1.24.0",
+      "scipy>=1.10.0",
+      "pyDOE2>=1.3.0",
+      "matplotlib>=3.7.0",
+      "pyyaml>=6.0",
+      "tqdm>=4.65.0",
+      "h5py>=3.8.0"
+    ],
+    "requirements_dev_txt": [
+      "pytest>=7.3.0",
+      "pytest-cov>=4.0.0",
+      "black>=23.0.0",
+      "flake8>=6.0.0",
+      "jupyter>=1.0.0",
+      "ipykernel>=6.0.0"
+    ],
+    "environment_yaml": {
+      "name": "pinns",
+      "channels": ["pytorch", "conda-forge", "defaults"],
+      "dependencies": [
+        "python=3.10",
+        "pytorch>=2.0.0",
+        "pytorch-cuda=11.8",
+        "numpy>=1.24.0",
+        "scipy>=1.10.0",
+        "matplotlib>=3.7.0",
+        "pyyaml>=6.0",
+        "tqdm>=4.65.0",
+        "h5py>=3.8.0",
+        {"pip": ["pyDOE2>=1.3.0"]}
+      ]
+    },
+    "rationale": {
+      "torch": "Core DL framework; autograd for PDE derivatives, optim.LBFGS",
+      "numpy+scipy": "Gauss-Legendre tableau computation (leggauss), spectral reference solutions",
+      "pyDOE2": "Latin Hypercube Sampling for collocation points",
+      "matplotlib": "Result visualization (spatio-temporal heatmaps, snapshot comparisons)",
+      "pyyaml": "Config file parsing",
+      "h5py": "Saving/loading spectral reference solution grids"
+    }
+  },
+
+  "entrypoints": {
+    "train.py": {
+      "description": "Main training script",
+      "cli_args": [
+        "--config     PATH     Path to YAML config file (required)",
+        "--experiment STR      Experiment name: burgers_continuous | schrodinger | burgers_discrete | allen_cahn",
+        "--output_dir PATH     Where to save checkpoints and results (default: results/)",
+        "--seed       INT      Random seed override (default: from config)",
+        "--device     STR      cuda | cpu (default: cuda)",
+        "--verbose    FLAG     Print loss at each L-BFGS iteration"
+      ]
+    },
+    "evaluate.py": {
+      "description": "Load checkpoint and compute relative L2 error against reference solution",
+      "cli_args": [
+        "--config        PATH  Config used during training",
+        "--checkpoint    PATH  Path to saved model .pt file",
+        "--reference     PATH  Path to reference solution .h5 file",
+        "--output_dir    PATH  Where to save plots and metric JSON",
+        "--plot          FLAG  Generate matplotlib comparison plots"
+      ]
+    },
+    "data/generate_reference.py": {
+      "description": "Generate spectral reference solutions for Schrodinger and Allen-Cahn via scipy pseudo-spectral solver",
+      "cli_args": [
+        "--pde    STR   schrodinger | allen_cahn",
+        "--modes  INT   Number of Fourier modes (default: 256 for Schrodinger, 512 for Allen-Cahn)",
+        "--output PATH  Output .h5 file path"
+      ]
+    }
+  },
+
+  "docker_spec": {
+    "base_image": "pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime",
+    "system_deps": ["gcc", "g++", "git"],
+    "python_setup": [
+      "COPY requirements.txt .",
+      "RUN pip install --no-cache-dir -r requirements.txt"
+    ],
+    "workdir": "/workspace",
+    "volumes": ["/workspace/data", "/workspace/results"],
+    "default_cmd": "python train.py --config configs/burgers_continuous.yaml --experiment burgers_continuous"
+  },
+
+  "risk_assessment": [
+    {
+      "risk_id": "R1",
+      "severity": "High",
+      "component": "GaussLegendreTableau (utils/rk_tableau.py)",
+      "description": "The Gauss-Legendre implicit RK tableau construction is non-trivial. The SIR notes confidence 0.82. The A matrix satisfies collocation conditions involving a Vandermonde system — numerical conditioning at q=500 may be an issue. Nodes from leggauss are on [-1,1] and must be shifted to [0,1].",
+      "mitigation": "Use numpy.polynomial.legendre.leggauss(q) for nodes/weights; solve for A via the integral condition sum_j(A[i,j] * c_j^{k-1}) = c_i^k / k for k=1..q (Vandermonde). Use float64 for tableau computation regardless of model dtype. Cap at q<=100 for first validation; q=500 only after q=32 passes."
+    },
+    {
+      "risk_id": "R2",
+      "severity": "High",
+      "component": "DiscretePINN — N[u] computation over all q stages",
+      "description": "For each of the q RK stages, we need autograd derivatives of the MLP w.r.t. x. At q=500, this requires 500 separate backward passes through the MLP for u_x and u_xx. Memory and compute cost scales linearly with q.",
+      "mitigation": "Vectorize: evaluate all q stage outputs in parallel (MLP output is [Nn, q+1]). Use vmap (torch.vmap) or batch the derivative computation via jacobian. Alternatively, use the Jacobian trick: if x is [Nn,1] shared across stages, compute all stage derivatives in one vectorized backward call."
+    },
+    {
+      "risk_id": "R3",
+      "severity": "Medium",
+      "component": "torch.optim.LBFGS behavior",
+      "description": "PyTorch's L-BFGS implementation requires a closure and has subtle differences from scipy's L-BFGS-B (line search, termination). Results may not exactly match if hyperparameters are not tuned.",
+      "mitigation": "Use line_search_fn='strong_wolfe'. Set max_eval=max_iter*5. If divergence occurs, fall back to Adam for 1000 steps then switch to L-BFGS."
+    },
+    {
+      "risk_id": "R4",
+      "severity": "Medium",
+      "component": "Weight initialization (confidence 0.72)",
+      "description": "Not specified in paper. Xavier uniform is assumed. Wrong init could cause slow convergence or failure for deep tanh networks.",
+      "mitigation": "Implement as config flag. Default Xavier uniform. If training stalls, try LeCun normal or small random normal (std=0.01). Design MLP class to accept init_fn argument."
+    },
+    {
+      "risk_id": "R5",
+      "severity": "Medium",
+      "component": "Schrodinger reference solution",
+      "description": "Paper uses Chebfun (MATLAB) for reference. We will use Python scipy pseudo-spectral solver instead. Small numerical differences may exist.",
+      "mitigation": "Implement generate_reference.py using scipy.fft + RK4 time integration with dt=pi/2*1e-6. Validate against known sech(x) initial condition. Accept <0.1% difference from paper's reference."
+    },
+    {
+      "risk_id": "R6",
+      "severity": "Low",
+      "component": "create_graph=True in autograd for higher-order derivatives",
+      "description": "Computing u_xx requires two autograd passes both with create_graph=True to allow L-BFGS to differentiate through them. Forgetting retain_graph or create_graph causes silent errors.",
+      "mitigation": "Centralize all derivative computation in DerivativeComputer.compute(). Unit-test u_x and u_xx on a known function (e.g. sin(x)) before plugging into PINN."
+    }
+  ]
+}

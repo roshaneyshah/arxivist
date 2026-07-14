@@ -1,0 +1,386 @@
+{
+  "paper_id": "arxiv_2401_006249",
+  "sir_version": 1,
+  "provenance": {
+    "title": "SpotV2Net: Multivariate Intraday Spot Volatility Forecasting via Vol-of-Vol-Informed Graph Attention Networks",
+    "authors": ["Alessio Brini", "Giacomo Toscano"],
+    "affiliations": [
+      "Duke University Pratt School of Engineering",
+      "Department of Economics and Management, University of Florence"
+    ],
+    "arxiv_id": "2401.06249v4",
+    "doi": null,
+    "submission_date": "2025-01-13",
+    "abstract": "This paper introduces SpotV2Net, a multivariate intraday spot volatility forecasting model based on a Graph Attention Network architecture. SpotV2Net represents assets as nodes within a graph and includes non-parametric high-frequency Fourier estimates of the spot volatility and co-volatility as node features. Further, it incorporates Fourier estimates of the spot volatility of volatility and co-volatility of volatility as features for node edges, to capture spillover effects. Results suggest that SpotV2Net yields statistically significant gains in forecasting accuracy, for both single-step and multi-step forecasts, compared to a panel heterogeneous auto-regressive model and alternative machine-learning models. GNNExplainer is used to interpret the forecasts and uncover subgraphs critical to a node's predictions.",
+    "domain": "Tabular",
+    "key_claims": [
+      "SpotV2Net, a GAT-based model with vol-of-vol edge features, yields statistically significant single-step and multi-step forecasting gains over a panel HAR-Spot model, XGBoost, and LSTM baselines.",
+      "Edge features derived from spot co-volatility of volatility are essential: an ablation without edge features (SpotV2Net-NE) underperforms the full model.",
+      "SpotV2Net can produce multi-step (functional) forecasts without a recursive approach, unlike HAR-Spot and XGB.",
+      "GNNExplainer-based interpretation shows that recently-added DJIA constituents (AMGN, CRM, HON) act as persistently influential 'source' nodes across the graph during the 2020-2023 study period.",
+      "Fourier non-parametric estimators (Malliavin-Mancino) allow robust, noise-resistant estimation of spot volatility, co-volatility, volatility-of-volatility and co-volatility-of-volatility from high-frequency price data."
+    ],
+    "parsed_at": "2026-07-07T00:00:00Z",
+    "arxivist_version": "1.0"
+  },
+  "architecture": {
+    "primary_variant": "SpotV2Net (GAT with edge features)",
+    "modules": [
+      {
+        "name": "InputGraphConstruction",
+        "description": "At each 30-min timestamp, builds a fully connected graph over N=30 assets. Node feature vector x_i concatenates contemporaneous+lagged (L lags) Fourier spot volatility and spot co-volatilities with all other assets. Edge feature vector x_ij concatenates contemporaneous+lagged spot volatility-of-volatility of both endpoint assets and their spot co-volatility-of-volatility.",
+        "input_shape": "raw Fourier estimate time series",
+        "output_shape": "node features x: [N, M], edge features x_e: [N*(N-1)/2, E] where M = (L+1)*N (vol + co-vols per asset), E = (L+1)*3",
+        "operation_type": "feature_engineering",
+        "confidence": 0.9
+      },
+      {
+        "name": "GATLayer (edge-aware)",
+        "description": "Modified GAT layer (Velickovic et al. 2017) extended to incorporate edge features into the attention coefficient computation. Uses learnable weight matrices W (node projection) and U (edge projection), concatenation, LeakyReLU, and softmax normalization.",
+        "input_shape": "x: [N, M'] (or [N, M] at first layer), x_e: [N*(N-1)/2, E'] (or [N*(N-1)/2, E] at first layer)",
+        "output_shape": "x': [N, M''] (hidden dim per layer, hyperparameter)",
+        "operation_type": "graph_attention",
+        "confidence": 0.95
+      },
+      {
+        "name": "MultiHeadAttention",
+        "description": "K independent attention heads per GAT layer. Outputs concatenated for hidden (non-final) layers, averaged for the layer preceding the prediction layer, per Velickovic et al. 2017.",
+        "input_shape": "x: [N, M'], x_e: [N*(N-1)/2, E']",
+        "output_shape": "concat: [N, K*M'']  or avg: [N, M'']",
+        "operation_type": "graph_attention",
+        "confidence": 0.9
+      },
+      {
+        "name": "GATStack",
+        "description": "Two hidden GAT layers (hyperparameter-tuned; optimal = 2), each followed by a nonlinear activation (ReLU chosen via hyperparameter search).",
+        "input_shape": "x: [N, M], x_e: [N*(N-1)/2, E]",
+        "output_shape": "x': [N, M_last_hidden]",
+        "operation_type": "graph_attention_stack",
+        "confidence": 0.85
+      },
+      {
+        "name": "PredictionHead",
+        "description": "Final affine transformation applied to the last hidden node representation to obtain the forecast y_hat_i = O x'_i + u. Output dim = 1 for single-step, 14 for multi-step (functional) forecast.",
+        "input_shape": "x': [N, M_last_hidden]",
+        "output_shape": "y_hat: [N, 1] (single-step) or [N, 14] (multi-step)",
+        "operation_type": "linear",
+        "confidence": 0.9
+      }
+    ],
+    "connections": [
+      {"from": "InputGraphConstruction", "to": "GATStack"},
+      {"from": "GATStack", "to": "MultiHeadAttention"},
+      {"from": "MultiHeadAttention", "to": "PredictionHead"}
+    ],
+    "variants": [
+      {"name": "SpotV2Net", "description": "Full model with node and edge (vol-of-vol) features."},
+      {"name": "SpotV2Net-NE", "description": "Ablation: identical architecture but no edge features (node features only) — used to isolate the contribution of vol-of-vol spillover information."},
+      {"name": "SpotV2Net single-step", "description": "Output dim 1, number of lags L=42 (optimized)."},
+      {"name": "SpotV2Net multi-step", "description": "Output dim 14 (functional forecast over the 30-min grid of a trading day), number of lags L=42 (optimized), produced without recursion."}
+    ]
+  },
+  "mathematical_spec": [
+    {
+      "name": "Price and spot volatility dynamics",
+      "latex": "dp_i(t) = \\mu_{i,1}(t)dt + \\sqrt{V_i(t)}dW_{i,1}(t), \\quad dV_i(t) = \\mu_{i,2}(t)dt + \\sqrt{\\tilde{V}_i(t)}dW_{i,2}(t)",
+      "role": "data_generating_process",
+      "hyperparameters": [],
+      "confidence": 0.95
+    },
+    {
+      "name": "Spot co-volatility",
+      "latex": "C_{ij}(t) := \\frac{d\\langle p_i, p_j\\rangle_t}{dt}, \\quad C_{ii}(t) = V_i(t)",
+      "role": "definition",
+      "hyperparameters": [],
+      "confidence": 0.95
+    },
+    {
+      "name": "Spot co-volatility of volatility",
+      "latex": "\\tilde{C}_{ij}(t) := \\frac{d\\langle V_i, V_j\\rangle_t}{dt}, \\quad \\tilde{C}_{ii}(t) = \\tilde{V}_i(t)",
+      "role": "definition",
+      "hyperparameters": [],
+      "confidence": 0.95
+    },
+    {
+      "name": "Node feature vector",
+      "latex": "x_i = \\left[ \\{\\hat{V}_{i,b-l}\\}_{l=0..L}, \\{\\hat{C}_{ij,b-l}\\}_{j\\neq i, l=0..L} \\right]",
+      "role": "model_input",
+      "hyperparameters": ["L (number of lags)"],
+      "confidence": 0.95
+    },
+    {
+      "name": "Edge feature vector",
+      "latex": "x^e_{ij} = \\left[ \\{\\hat{\\tilde{V}}_{i,b-l}\\}_{l=0..L}, \\{\\hat{\\tilde{V}}_{j,b-l}\\}_{l=0..L}, \\{\\hat{\\tilde{C}}_{ij,b-l}\\}_{l=0..L} \\right]",
+      "role": "model_input",
+      "hyperparameters": ["L (number of lags)"],
+      "confidence": 0.95
+    },
+    {
+      "name": "Attention coefficient (no edge features, base GAT)",
+      "latex": "e_{ij} = a(Wx_i, Wx_j), \\quad \\alpha_{ij} = \\frac{\\exp(e_{ij})}{\\sum_{k=1}^{N}\\exp(e_{ik})}",
+      "role": "model_architecture",
+      "hyperparameters": ["W (weight matrix)"],
+      "confidence": 0.95
+    },
+    {
+      "name": "Attention coefficient with LeakyReLU (Velickovic parameterization)",
+      "latex": "\\alpha_{ij} = \\frac{\\exp(L(q^T[Wx_i \\| Wx_j]))}{\\sum_{k=1}^{N}\\exp(L(q^T[Wx_i \\| Wx_k]))}",
+      "role": "model_architecture",
+      "hyperparameters": ["q (weight vector)", "c (LeakyReLU negative slope)"],
+      "confidence": 0.95
+    },
+    {
+      "name": "LeakyReLU activation",
+      "latex": "L(x) = x \\text{ if } x>0 \\text{ else } cx",
+      "role": "activation",
+      "hyperparameters": ["c"],
+      "confidence": 0.95
+    },
+    {
+      "name": "Node hidden representation",
+      "latex": "x'_i = \\sigma\\left(\\sum_{j=1}^{N}\\alpha_{ij}Wx_j\\right)",
+      "role": "model_architecture",
+      "hyperparameters": ["sigma (activation function)"],
+      "confidence": 0.95
+    },
+    {
+      "name": "Multi-head concatenation (hidden layers)",
+      "latex": "x'_i = \\|_{k=1}^{K}\\sigma\\left(\\sum_{j=1}^{N}\\alpha^k_{ij}W_k x_j\\right)",
+      "role": "model_architecture",
+      "hyperparameters": ["K (number of heads)"],
+      "confidence": 0.9
+    },
+    {
+      "name": "Multi-head averaging (layer before prediction)",
+      "latex": "x'_i = \\sigma\\left(\\frac{1}{K}\\sum_{k=1}^{K}\\sum_{j=1}^{N}\\alpha^k_{ij}W_k x_j\\right)",
+      "role": "model_architecture",
+      "hyperparameters": ["K (number of heads)"],
+      "confidence": 0.9
+    },
+    {
+      "name": "Prediction layer",
+      "latex": "\\hat{y}_i = Ox'_i + u",
+      "role": "output_head",
+      "hyperparameters": ["O (output weight matrix)", "u (bias vector)"],
+      "confidence": 0.9
+    },
+    {
+      "name": "Edge-aware attention coefficient",
+      "latex": "\\alpha'_{ij} = \\frac{\\exp(L(q'^T[Wx_i \\| Wx_j \\| Ux^e_{ij}]))}{\\sum_{k=1}^{N}\\exp(L(q'^T[Wx_i \\| Wx_k \\| Ux^e_{ik}]))}",
+      "role": "model_architecture",
+      "hyperparameters": ["U (edge weight matrix)", "q' (weight vector)"],
+      "confidence": 0.95
+    },
+    {
+      "name": "MSE loss (aggregate, single-step)",
+      "latex": "\\frac{1}{T_{test}}\\sum_{j=1}^{T_{test}}\\frac{1}{N}\\sum_{i=1}^{N}(\\hat{V}_{i,j} - \\hat{V}^*_{i,j})^2",
+      "role": "loss_and_metric",
+      "hyperparameters": [],
+      "confidence": 0.95
+    },
+    {
+      "name": "QLIKE loss (aggregate, single-step)",
+      "latex": "\\frac{1}{T_{test}}\\sum_{j=1}^{T_{test}}\\frac{1}{N}\\sum_{i=1}^{N}\\left[\\frac{\\hat{V}_{i,j}}{\\hat{V}^*_{i,j}} - \\log\\frac{\\hat{V}_{i,j}}{\\hat{V}^*_{i,j}} - 1\\right]",
+      "role": "loss_and_metric",
+      "hyperparameters": [],
+      "confidence": 0.95
+    },
+    {
+      "name": "MSE / QLIKE (multi-step, functional)",
+      "latex": "\\frac{1}{D_{test}}\\sum_{j=1}^{D_{test}}\\frac{1}{N}\\sum_{i=1}^{N}\\frac{1}{H}\\sum_{h=1}^{H}(\\hat{V}_{i,j+h}-\\hat{V}^*_{i,j+h})^2 \\text{ (and analogous QLIKE)}",
+      "role": "loss_and_metric",
+      "hyperparameters": ["H=14"],
+      "confidence": 0.95
+    },
+    {
+      "name": "HAR-Spot panel model (baseline)",
+      "latex": "\\hat{V}_{i,b+1} = \\mu + \\phi_1\\hat{V}_{i,b} + \\phi_2\\bar{V}^{(7)}_{i,b} + \\phi_3\\bar{V}^{(8:13)}_{i,b} + \\sum_{k\\neq i}[\\theta_1 \\hat{V}_{k,b} + \\theta_2 \\bar{V}^{(7)}_{k,b} + \\theta_3 \\bar{V}^{(8:13)}_{k,b}] + \\epsilon_{i,b}",
+      "role": "baseline_model",
+      "hyperparameters": ["phi_1..3", "theta_1..3", "mu"],
+      "confidence": 0.9
+    },
+    {
+      "name": "Fourier co-volatility coefficient estimator",
+      "latex": "c_k(C_{n,N_c}) = \\frac{T}{2N_c+1}\\sum_{|l|\\le N_c} c_l(dp_{1,n})c_{k-l}(dp_{2,n})",
+      "role": "estimator",
+      "hyperparameters": ["N_c cutting frequency"],
+      "confidence": 0.9
+    },
+    {
+      "name": "Fourier-Fejer spot volatility/co-volatility inversion",
+      "latex": "\\hat{C}_{12,b} = \\sum_{|k|<M_c}(1-|k|/M_c) c_k(C_{n,N_c}) e^{ik\\frac{2\\pi}{T}\\tau_b}",
+      "role": "estimator",
+      "hyperparameters": ["M_c < N_c"],
+      "confidence": 0.9
+    },
+    {
+      "name": "Fourier co-volatility-of-volatility and volatility-of-volatility estimator",
+      "latex": "c_k(\\tilde{C}_{n,N_c,S_c}) = \\frac{T}{2S_c+1}\\sum_{|l|\\le S_c} l(l-k) c_l(C_{n,N_c}) c_{k-l}(C_{n,N_c})",
+      "role": "estimator",
+      "hyperparameters": ["S_c < N_c"],
+      "confidence": 0.85
+    }
+  ],
+  "tensor_semantics": [
+    {"name": "x (node features)", "shape": "[N, M]", "dtype": "float32", "role": "input", "notes": "N=30 assets; M = (L+1)*(1 vol + N-1 co-vols)"},
+    {"name": "x_e (edge features)", "shape": "[N*(N-1)/2, E]", "dtype": "float32", "role": "input", "notes": "E = (L+1)*3 (vol-of-vol_i, vol-of-vol_j, co-vol-of-vol_ij)"},
+    {"name": "adjacency A", "shape": "[N, N]", "dtype": "binary", "role": "input", "notes": "fully connected graph, all entries = 1"},
+    {"name": "alpha_ij (attention weights)", "shape": "[N, N]", "dtype": "float32", "role": "intermediate", "notes": "row-normalized via softmax"},
+    {"name": "x' (hidden node repr.)", "shape": "[N, M']", "dtype": "float32", "role": "intermediate", "notes": "M' is a tuned hyperparameter per layer"},
+    {"name": "y_hat (prediction)", "shape": "[N, 1] or [N, 14]", "dtype": "float32", "role": "output", "notes": "1 = single-step, 14 = multi-step functional forecast"}
+  ],
+  "training_pipeline": {
+    "optimizer": {
+      "name": "AdamW",
+      "learning_rate": 1e-4,
+      "beta1": null,
+      "beta2": null,
+      "weight_decay": null,
+      "confidence": 0.85
+    },
+    "lr_schedule": {
+      "type": null,
+      "warmup_steps": null,
+      "total_steps": null,
+      "confidence": 0.3
+    },
+    "batch_size": 128,
+    "effective_batch_size": 128,
+    "training_steps": null,
+    "epochs": 120,
+    "mixed_precision": null,
+    "gradient_clipping": null,
+    "data_augmentation": [],
+    "curriculum": null,
+    "confidence": 0.75
+  },
+  "evaluation_protocol": {
+    "datasets": [
+      {
+        "name": "DJIA 30-constituent 1-second TAQ prices (WRDS)",
+        "split": "train 06/01/2020-07/20/2022 (73%, 7518 obs); validation 07/21/2022-10/14/2022 (8%, 840 obs); test 10/15/2022-05/10/2023 (19%, 1960 obs)"
+      }
+    ],
+    "metrics": ["MSE (Eq. 4/7)", "QLIKE (Eq. 5/8)"],
+    "reported_results": [
+      {"model": "HAR-Spot", "phase": "single-step test", "MSE": 5.089e-08, "QLIKE": 0.343},
+      {"model": "XGB", "phase": "single-step test", "MSE": 6.232e-08, "QLIKE": 0.429},
+      {"model": "LSTM", "phase": "single-step test", "MSE": 5.198e-08, "QLIKE": 0.359},
+      {"model": "SpotV2Net-NE", "phase": "single-step test", "MSE": 5.115e-08, "QLIKE": 0.354},
+      {"model": "SpotV2Net", "phase": "single-step test", "MSE": 4.273e-08, "QLIKE": 0.286, "note": "included in Model Confidence Set at 5% level"},
+      {"model": "HAR-Spot", "phase": "multi-step test", "MSE": 5.876e-08, "QLIKE": 0.407},
+      {"model": "XGB", "phase": "multi-step test", "MSE": 6.943e-08, "QLIKE": 0.478},
+      {"model": "LSTM", "phase": "multi-step test", "MSE": 5.467e-08, "QLIKE": 0.379},
+      {"model": "SpotV2Net-NE", "phase": "multi-step test", "MSE": 5.312e-08, "QLIKE": 0.368},
+      {"model": "SpotV2Net", "phase": "multi-step test", "MSE": 4.342e-08, "QLIKE": 0.294, "note": "included in Model Confidence Set at 5% level"}
+    ],
+    "baselines": ["HAR-Spot (panel Heterogeneous Auto-Regressive model)", "XGBoost", "LSTM", "SpotV2Net-NE (ablation, no edge features)"],
+    "compute": "NVIDIA GeForce RTX 2080 Ti, 12GB VRAM",
+    "special_conditions": [
+      "Model Confidence Set (Hansen et al. 2011) with 5000 bootstrap replications, range statistic",
+      "Diebold-Mariano test at 5% significance for pairwise comparisons",
+      "GNNExplainer (Ying et al. 2019) applied per-node, per-timestamp to extract top N*=5 most influential source nodes"
+    ],
+    "confidence": 0.95
+  },
+  "implementation_assumptions": [
+    {
+      "assumption": "Optimizer betas (beta1, beta2) for AdamW use PyTorch defaults (0.9, 0.999) since not specified in paper.",
+      "basis": "literature default",
+      "confidence": 0.5,
+      "alternatives": ["(0.9, 0.98) as in Transformer literature"]
+    },
+    {
+      "assumption": "Weight decay for AdamW uses PyTorch default (0.01).",
+      "basis": "literature default",
+      "confidence": 0.4,
+      "alternatives": ["0.0", "1e-5"]
+    },
+    {
+      "assumption": "No explicit LR schedule (warmup/decay) is mentioned; assume constant LR through the 120 epochs, as HP table does not list a scheduler.",
+      "basis": "inferred from absence of a scheduler entry in Table 8",
+      "confidence": 0.55,
+      "alternatives": ["cosine decay", "step decay after plateau"]
+    },
+    {
+      "assumption": "Gradient clipping is not applied (no mention in the paper or hyperparameter tables).",
+      "basis": "inferred from absence in Table 8",
+      "confidence": 0.5,
+      "alternatives": ["clip_grad_norm at 1.0"]
+    },
+    {
+      "assumption": "Random seed handling and exact train/val/test shuffling order are not specified; implement deterministic seeding utility for Python/NumPy/PyTorch defaulting to seed=42.",
+      "basis": "common practice",
+      "confidence": 0.5,
+      "alternatives": ["paper likely used a fixed but undisclosed seed"]
+    },
+    {
+      "assumption": "Loss function for training is MSE (matches evaluation metric reported first; QLIKE used only for evaluation), for both SpotV2Net and baselines.",
+      "basis": "explicit in Table 8/9/10 hyperparameter grids ('Loss Function: MSE')",
+      "confidence": 0.9,
+      "alternatives": []
+    },
+    {
+      "assumption": "Node/edge feature standardization (e.g., z-scoring) prior to model input is not explicitly described; implement a standard per-feature StandardScaler fit on the training set only.",
+      "basis": "common practice for GNN/deep learning volatility pipelines",
+      "confidence": 0.45,
+      "alternatives": ["log-transform volatilities before scaling", "no scaling"]
+    },
+    {
+      "assumption": "The exact Fourier cutting frequencies (Nvi, Mvi, Svi, Lvi, Nc, Mc, Sc, Lc) are set per the external Sanfelici & Toscano (2024) FMVol MATLAB library guidance, not reproduced numerically in this paper; treat these as configurable estimator parameters with literature-typical defaults and flag for user calibration.",
+      "basis": "explicit deferral to external reference in Sec. 7.1",
+      "confidence": 0.4,
+      "alternatives": ["grid search using Mancino & Recchioni (2015) asymptotic MSE-minimizing formulas"]
+    },
+    {
+      "assumption": "Jump-filtering threshold constants beta=0.5, alpha=0.5 (Section 7.1, footnote 7) are used directly as stated.",
+      "basis": "explicitly stated in paper",
+      "confidence": 0.9,
+      "alternatives": []
+    },
+    {
+      "assumption": "PyTorch Geometric (PyG) is the implementation framework for the GAT layers, given the standard research convention for GAT-based work in finance/GNN literature; the paper does not name a specific framework.",
+      "basis": "domain convention",
+      "confidence": 0.6,
+      "alternatives": ["Deep Graph Library (DGL)", "custom from-scratch attention implementation"]
+    },
+    {
+      "assumption": "Checkpoint selection uses best validation MSE (early-stopping-style best-checkpoint save), consistent with the paper's use of a held-out validation set for hyperparameter tuning.",
+      "basis": "inferred from standard practice / validation set purpose",
+      "confidence": 0.55,
+      "alternatives": ["best validation QLIKE", "last epoch checkpoint"]
+    }
+  ],
+  "ambiguities": [
+    {
+      "location": "Section 5, GAT formulation",
+      "description": "The exact dimensionality M' (hidden layer dim) growth/shrinkage pattern across the two hidden layers is given as a list [400, 200] (single-step) / [400, 400] (multi-step) in Table 8, but how these interact with K attention heads (concat vs avg) at each of the two layers specifically is not fully spelled out beyond the general multi-head rule.",
+      "primary_assumption": "Layer 1: K heads concatenated -> output dim 400*K if concat=True is layer-wide, but paper states dimension_hidden_layers=[400,200] directly as the *output* dims, so heads output 400/K each before concat to reach listed size.",
+      "alternatives": ["Heads averaged even at hidden (non-final) layers, with the listed 400/200 as true post-average dims"],
+      "confidence": 0.55
+    },
+    {
+      "location": "Appendix B / Table 8",
+      "description": "\"Concatenate Heads: True\" is listed as a single global flag for the whole model, but Sec. 5 states concatenation is skipped for the layer immediately preceding prediction (averaging is used there instead). It is ambiguous whether the flag applies only to the layer before the final prediction layer or to all hidden layers.",
+      "primary_assumption": "Concatenate at all hidden layers except the one immediately before the prediction (output) layer, per Sec. 5's stated rule, overriding the blanket True flag for that one layer.",
+      "alternatives": ["Concatenate=True literally at every hidden layer including the one before prediction"],
+      "confidence": 0.5
+    },
+    {
+      "location": "Section 7.1",
+      "description": "Precise Fourier cutting frequency values (Nc, Mc, Sc, Lc, Nvi, Mvi, Svi, Lvi) used for the DJIA empirical study are deferred to the external Sanfelici and Toscano (2024) FMVol library and not given numerically in-text.",
+      "primary_assumption": "Implement Fourier estimators as configurable functions with placeholder default cutting-frequency heuristics (e.g., Nc = floor(n/2), Mc = floor(sqrt(n))), clearly flagged as requiring calibration against the FMVol library for exact reproduction.",
+      "alternatives": ["Hardcode values from Mancino & Recchioni (2015) asymptotic formulas"],
+      "confidence": 0.35
+    }
+  ],
+  "confidence_annotations": {
+    "architecture": 0.88,
+    "mathematical_spec": 0.9,
+    "tensor_semantics": 0.8,
+    "training_pipeline": 0.65,
+    "evaluation_protocol": 0.93,
+    "implementation_assumptions": 0.55,
+    "overall_sir_confidence": 0.79
+  }
+}

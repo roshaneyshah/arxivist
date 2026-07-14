@@ -1,0 +1,52 @@
+{
+  "model": {
+    "N": 2,
+    "d_model": 64,
+    "d_ff": 128,
+    "h": 4,
+    "dropout": 0.1,
+    "weight_tying": true,
+    "params": 182528
+  },
+  "training": {
+    "steps": 600,
+    "warmup": 100,
+    "label_smoothing": 0.1,
+    "batch_size": 128,
+    "device": "cpu",
+    "time_min": 1.22
+  },
+  "data": {
+    "task": "synthetic reverse",
+    "vocab": 256,
+    "train": 4000,
+    "val": 200,
+    "test": 200
+  },
+  "results": {
+    "test_bleu": 99.07
+  },
+  "history": {
+    "step": [
+      100,
+      200,
+      300,
+      400,
+      500,
+      600
+    ],
+    "loss": [
+      4.8852,
+      3.4367,
+      2.4075,
+      1.8531,
+      1.4949,
+      1.3418
+    ],
+    "val_bleu": [
+      21.02,
+      91.39,
+      98.18
+    ]
+  }
+}

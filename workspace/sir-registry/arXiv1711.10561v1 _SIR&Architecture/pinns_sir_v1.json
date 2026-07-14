@@ -1,0 +1,345 @@
+{
+  "paper_id": "paper_pinns_raissi2017",
+  "sir_version": 1,
+  "provenance": {
+    "parsed_at": "2026-06-29T00:00:00Z",
+    "source": "PDF upload",
+    "arxiv_id": "1711.10561v1",
+    "parser_stage": "01_paper_parser"
+  },
+
+  "metadata": {
+    "title": "Physics Informed Deep Learning (Part I): Data-driven Solutions of Nonlinear Partial Differential Equations",
+    "authors": [
+      {"name": "Maziar Raissi", "affiliation": "Division of Applied Mathematics, Brown University"},
+      {"name": "Paris Perdikaris", "affiliation": "Department of Mechanical Engineering and Applied Mechanics, University of Pennsylvania"},
+      {"name": "George Em Karniadakis", "affiliation": "Division of Applied Mathematics, Brown University"}
+    ],
+    "submission_date": "2017-11-28",
+    "abstract_truncated": "We introduce physics informed neural networks – neural networks trained to solve supervised learning tasks while respecting any given law of physics described by general nonlinear partial differential equations. We present data-driven solution and data-driven discovery of PDEs via continuous time and discrete time models.",
+    "primary_domain": "Scientific ML / PDE Solving",
+    "key_claims": [
+      "PINNs can solve nonlinear PDEs with as few as ~100 boundary/initial data points by encoding physics as a regularization term via collocation points.",
+      "Continuous-time PINNs encode PDE residuals at collocation points and train with L-BFGS via MSE over data + physics loss.",
+      "Discrete-time PINNs leverage implicit Runge-Kutta with arbitrarily many stages (up to 500), enabling single-step prediction across large time intervals.",
+      "Relative L2 errors are on the order of 1e-3 to 1e-4 across Burgers, Schrodinger, and Allen-Cahn equations.",
+      "The physics-informed loss term (MSEf) acts as a regularizer, preventing overfitting and enabling generalization from small datasets."
+    ]
+  },
+
+  "architecture": {
+    "confidence": 0.88,
+    "overview": "Two classes of PINN models: (1) Continuous-time PINN and (2) Discrete-time PINN using implicit Runge-Kutta integration. Both use standard fully-connected feedforward neural networks (MLPs) with tanh activations and automatic differentiation to compute PDE residuals.",
+
+    "variants": [
+      {
+        "variant_id": "continuous_pinn",
+        "description": "Continuous-time PINN: a single MLP approximates u(t,x). A second 'physics network' f(t,x) is derived via autograd from u. Shared weights trained jointly.",
+        "modules": [
+          {
+            "name": "SolutionNetwork_u",
+            "type": "MLP (fully connected)",
+            "input": "[B, 2]  (t, x concatenated)",
+            "output": "[B, 1]  (scalar u) or [B, 2] for complex-valued (u_real, u_imag)",
+            "layers": "Variable; benchmark default: 9 hidden layers x 20 neurons (Burgers), 5 hidden layers x 100 neurons (Schrodinger)",
+            "activation": "tanh",
+            "notes": "For Schrodinger: multi-output [u, v] where h = u + iv"
+          },
+          {
+            "name": "PhysicsResidualNetwork_f",
+            "type": "Derived via automatic differentiation from SolutionNetwork_u",
+            "input": "[Nf, 2] collocation points (t_f, x_f)",
+            "output": "[Nf, 1] residual f(t,x) = u_t + N[u]",
+            "notes": "No new parameters; shares all weights with SolutionNetwork_u"
+          }
+        ],
+        "connections": [
+          "SolutionNetwork_u --> PhysicsResidualNetwork_f (via autograd chain rule)"
+        ]
+      },
+      {
+        "variant_id": "discrete_pinn_rk",
+        "description": "Discrete-time PINN: A multi-output MLP predicts intermediate Runge-Kutta stage solutions and the final solution at t^{n+1} from inputs at t^n. Physics is embedded in the output layer via RK tableau weights.",
+        "modules": [
+          {
+            "name": "RK_SolutionNetwork",
+            "type": "MLP (fully connected), multi-output",
+            "input": "[B, 1]  (spatial coordinate x only)",
+            "output": "[B, q+1]  where q = number of RK stages; outputs are [u^{n+c1}(x), ..., u^{n+cq}(x), u^{n+1}(x)]",
+            "layers": "4 hidden layers x 50 neurons (Burgers discrete), 4 hidden layers x 200 neurons (Allen-Cahn)",
+            "activation": "tanh",
+            "notes": "Output dimension grows with q (500 stages => 501-dim output vector). Only last layer size scales with q."
+          },
+          {
+            "name": "RK_PhysicsConstraint",
+            "type": "Algebraic constraint (not a learned module)",
+            "description": "Computes u^n_i and u^n_{q+1} from RK tableau {a_ij, b_j, c_j} and network outputs via equations (9). Embedded in the loss.",
+            "notes": "Uses implicit Gauss-Legendre RK tableau (fully implicit, A-stable, arbitrary order)"
+          }
+        ],
+        "connections": [
+          "RK_SolutionNetwork outputs --> RK_PhysicsConstraint --> SSE loss"
+        ]
+      }
+    ],
+
+    "primary_variant": "continuous_pinn",
+    "ambiguities": [
+      {
+        "location": "Section 2, general",
+        "description": "Weight initialization scheme not specified",
+        "primary_assumption": "Xavier/Glorot uniform initialization (standard for tanh MLPs)",
+        "alternatives": ["He init", "LeCun init"],
+        "confidence": 0.72
+      },
+      {
+        "location": "Section 3 — Discrete time, RK tableau",
+        "description": "Specific Gauss-Legendre tableau coefficients not listed in paper; paper references Iserles [24]",
+        "primary_assumption": "Standard q-stage Gauss-Legendre implicit RK collocation nodes and weights",
+        "alternatives": ["Radau IIA", "Lobatto IIIC"],
+        "confidence": 0.82
+      }
+    ]
+  },
+
+  "mathematical_spec": {
+    "confidence": 0.96,
+    "pde_general_form": {
+      "latex": "u_t + \\mathcal{N}[u; \\lambda] = 0, \\quad x \\in \\Omega, \\quad t \\in [0, T]",
+      "description": "General parametrized nonlinear PDE. u(t,x) is the latent solution. N[·;λ] is a nonlinear differential operator."
+    },
+    "physics_residual": {
+      "latex": "f := u_t + \\mathcal{N}[u]",
+      "role": "Defines the physics residual network. Evaluated at collocation points. Enforced to be zero via MSEf."
+    },
+    "loss_continuous": {
+      "name": "Total MSE loss (continuous PINN)",
+      "latex": "\\text{MSE} = \\text{MSE}_u + \\text{MSE}_f",
+      "components": {
+        "MSEu": {
+          "latex": "\\text{MSE}_u = \\frac{1}{N_u} \\sum_{i=1}^{N_u} |u(t^i_u, x^i_u) - u^i|^2",
+          "role": "Data fidelity: penalizes deviation from initial/boundary conditions",
+          "training": true
+        },
+        "MSEf": {
+          "latex": "\\text{MSE}_f = \\frac{1}{N_f} \\sum_{i=1}^{N_f} |f(t^i_f, x^i_f)|^2",
+          "role": "Physics regularization: penalizes PDE residual at collocation points",
+          "training": true
+        }
+      }
+    },
+    "loss_schrodinger": {
+      "name": "Total MSE loss (Schrodinger — periodic BC)",
+      "latex": "\\text{MSE} = \\text{MSE}_0 + \\text{MSE}_b + \\text{MSE}_f",
+      "components": {
+        "MSE0": "Initial data loss on h(0, x)",
+        "MSEb": "Periodic BC loss: |h(t, -5) - h(t, 5)|^2 + |h_x(t,-5) - h_x(t,5)|^2",
+        "MSEf": "Physics residual: |f(t_f, x_f)|^2"
+      }
+    },
+    "loss_discrete_rk": {
+      "name": "SSE loss (discrete-time PINN)",
+      "latex": "\\text{SSE} = \\text{SSE}_n + \\text{SSE}_b",
+      "components": {
+        "SSEn": {
+          "latex": "\\sum_{j=1}^{q+1} \\sum_{i=1}^{N_n} |u^n_j(x^{n,i}) - u^{n,i}|^2",
+          "description": "All q+1 stage predictions vs data at time t^n"
+        },
+        "SSEb": "Boundary condition enforcement for all RK stages"
+      }
+    },
+    "runge_kutta_scheme": {
+      "latex_stages": "u^{n+c_i} = u^n - \\Delta t \\sum_{j=1}^q a_{ij} \\mathcal{N}[u^{n+c_j}], \\quad i=1,\\ldots,q",
+      "latex_step": "u^{n+1} = u^n - \\Delta t \\sum_{j=1}^q b_j \\mathcal{N}[u^{n+c_j}]",
+      "equivalent_form": {
+        "latex": "u^n = u^n_i \\text{ where } u^n_i := u^{n+c_i} + \\Delta t \\sum_{j=1}^q a_{ij} \\mathcal{N}[u^{n+c_j}]",
+        "role": "Rewrite that allows the network to output stage solutions and compare against training data at t^n"
+      },
+      "scheme_type": "Implicit Gauss-Legendre (fully implicit, A-stable)",
+      "max_stages_demonstrated": 500,
+      "temporal_error_order": "O(Δt^{2q}) for q-stage Gauss-Legendre"
+    },
+    "equations_by_example": {
+      "burgers": {
+        "pde": "u_t + u u_x - (0.01/\\pi) u_{xx} = 0, \\quad x \\in [-1,1], t \\in [0,1]",
+        "ic": "u(0, x) = -\\sin(\\pi x)",
+        "bc": "u(t, -1) = u(t, 1) = 0",
+        "operator": "\\mathcal{N}[u] = u u_x - (0.01/\\pi) u_{xx}"
+      },
+      "schrodinger": {
+        "pde": "i h_t + 0.5 h_{xx} + |h|^2 h = 0, \\quad x \\in [-5,5], t \\in [0, \\pi/2]",
+        "ic": "h(0, x) = 2 \\operatorname{sech}(x)",
+        "bc": "h(t,-5)=h(t,5), \\quad h_x(t,-5)=h_x(t,5)",
+        "operator": "\\mathcal{N}[h] = -0.5 h_{xx} - |h|^2 h"
+      },
+      "allen_cahn": {
+        "pde": "u_t - 0.0001 u_{xx} + 5u^3 - 5u = 0, \\quad x \\in [-1,1], t \\in [0,1]",
+        "ic": "u(0, x) = x^2 \\cos(\\pi x)",
+        "bc": "u(t,-1)=u(t,1), \\quad u_x(t,-1)=u_x(t,1)",
+        "operator": "\\mathcal{N}[u] = -0.0001 u_{xx} + 5u^3 - 5u"
+      }
+    }
+  },
+
+  "tensor_semantics": {
+    "confidence": 0.79,
+    "tensors": [
+      {"name": "t_u", "shape": "[Nu, 1]", "dtype": "float32", "role": "input — time coords of boundary/IC data"},
+      {"name": "x_u", "shape": "[Nu, 1]", "dtype": "float32", "role": "input — spatial coords of boundary/IC data"},
+      {"name": "u_data", "shape": "[Nu, 1]", "dtype": "float32", "role": "target — known solution values at (t_u, x_u)"},
+      {"name": "t_f", "shape": "[Nf, 1]", "dtype": "float32", "role": "input — collocation time coords for physics loss"},
+      {"name": "x_f", "shape": "[Nf, 1]", "dtype": "float32", "role": "input — collocation spatial coords for physics loss"},
+      {"name": "u_pred", "shape": "[*, 1]", "dtype": "float32", "role": "network output — predicted solution (continuous)"},
+      {"name": "f_pred", "shape": "[Nf, 1]", "dtype": "float32", "role": "physics residual at collocation points"},
+      {"name": "h_pred", "shape": "[*, 2]", "dtype": "float32", "role": "complex solution [u_real, u_imag] for Schrodinger"},
+      {"name": "rk_stages_out", "shape": "[Nn, q+1]", "dtype": "float32", "role": "discrete PINN output — q intermediate RK stages + final solution"}
+    ],
+    "notes": "B = batch size, Nu = number of IC/BC data points, Nf = number of collocation points, Nn = number of spatial data at snapshot t^n, q = number of RK stages"
+  },
+
+  "training_pipeline": {
+    "confidence": 0.83,
+    "optimizer": {
+      "name": "L-BFGS",
+      "type": "Quasi-Newton, full-batch",
+      "library": "scipy.optimize.minimize or tensorflow's ScipyOptimizerInterface",
+      "notes": "L-BFGS used for all benchmarks. Paper mentions Adam/SGD as alternatives for large datasets but does not use them in experiments."
+    },
+    "alternative_optimizer": {
+      "name": "Adam / SGD",
+      "notes": "Mentioned for larger datasets; not used in benchmarks. If switching to Adam, use lr~1e-3."
+    },
+    "learning_rate_schedule": null,
+    "batch_size": "Full batch (no mini-batching in paper experiments)",
+    "training_steps": null,
+    "num_epochs": "Run until L-BFGS convergence (no fixed epoch count stated)",
+    "mixed_precision": null,
+    "gradient_clipping": null,
+    "data_augmentation": null,
+    "collocation_sampling": {
+      "method": "Latin Hypercube Sampling (LHS)",
+      "library": "pyDOE or scipy.stats.qmc.LatinHypercube",
+      "sizes": {
+        "burgers_continuous": {"Nu": 100, "Nf": 10000},
+        "schrodinger": {"N0": 50, "Nb": 50, "Nf": 20000},
+        "burgers_discrete": {"Nn": 250},
+        "allen_cahn": {"Nn": 200}
+      }
+    },
+    "hardware": {
+      "gpu": "NVIDIA Titan X (training time ~60s for Burgers continuous)",
+      "notes": "Target environment: single GPU. Paper uses TensorFlow 1.x."
+    },
+    "framework": "TensorFlow (paper uses tf.gradients for autograd). Modern implementation can use PyTorch autograd.",
+    "training_time": "~60 seconds for Burgers continuous (Titan X GPU)"
+  },
+
+  "evaluation_protocol": {
+    "confidence": 0.95,
+    "metric": "Relative L2 error: ||u_pred - u_exact||_2 / ||u_exact||_2",
+    "datasets": {
+      "burgers": {
+        "exact_solution": "Analytically available (referenced from Basdevant et al., 1986)",
+        "test_set": "Full spatio-temporal grid"
+      },
+      "schrodinger": {
+        "exact_solution": "Simulated via Chebfun package, spectral Fourier (256 modes), RK4, dt=pi/2*1e-6",
+        "test_set": "Full spatio-temporal grid"
+      },
+      "allen_cahn": {
+        "exact_solution": "Simulated via Chebfun package, spectral Fourier (512 modes), RK4, dt=1e-5",
+        "test_set": "Full spatio-temporal grid"
+      }
+    },
+    "results_table": [
+      {"experiment": "Burgers continuous (Nu=100, Nf=10000, 9L x 20N)", "relative_L2": 6.7e-4},
+      {"experiment": "Schrodinger (N0=50, Nb=50, Nf=20000, 5L x 100N)", "relative_L2": 1.97e-3},
+      {"experiment": "Burgers discrete (Nn=250, q=500, dt=0.8, 4L x 50N)", "relative_L2": 8.2e-4},
+      {"experiment": "Allen-Cahn discrete (Nn=200, q=100, dt=0.8, 4L x 200N)", "relative_L2": 6.99e-3}
+    ],
+    "sensitivity_studies": {
+      "burgers_continuous": "Table 1 (Nu vs Nf), Table 2 (layers vs neurons)",
+      "burgers_discrete": "Table 3 (layers vs neurons), Table 4 (q vs dt)"
+    },
+    "baselines": ["Gaussian Process methods (Raissi et al. 2017, arXiv:1703.10230) — PINNs outperform by ~2 orders of magnitude in L2 error"]
+  },
+
+  "implementation_assumptions": [
+    {
+      "assumption": "Xavier (Glorot) uniform weight initialization",
+      "basis": "Standard default for tanh networks in both TensorFlow and PyTorch",
+      "confidence": 0.80,
+      "alternatives": ["He init", "random normal std=0.1"]
+    },
+    {
+      "assumption": "Gauss-Legendre implicit RK tableau for discrete PINN",
+      "basis": "Paper states 'implicit Runge-Kutta' and references Iserles [24]; Gauss-Legendre is the canonical fully implicit A-stable family",
+      "confidence": 0.85,
+      "alternatives": ["Radau IIA", "Lobatto IIIC"]
+    },
+    {
+      "assumption": "PyTorch + torch.autograd for automatic differentiation (modern reimplementation)",
+      "basis": "Paper uses TF1 tf.gradients; PyTorch autograd is the closest modern equivalent with same semantics",
+      "confidence": 0.90,
+      "alternatives": ["JAX jax.grad", "TensorFlow 2.x GradientTape"]
+    },
+    {
+      "assumption": "L-BFGS via torch.optim.LBFGS with line search",
+      "basis": "Paper explicitly uses L-BFGS; PyTorch has a native implementation",
+      "confidence": 0.92,
+      "alternatives": ["scipy.optimize.minimize with L-BFGS-B", "Adam fallback"]
+    },
+    {
+      "assumption": "Collocation points sampled fresh every run via LHS (not fixed seed)",
+      "basis": "Paper states LHS sampling; no fixed seed mentioned",
+      "confidence": 0.75,
+      "alternatives": ["Fixed seed for reproducibility (recommended in implementation)"]
+    },
+    {
+      "assumption": "Exact Burgers solution generated via scipy or external solver for comparison",
+      "basis": "Paper says exact solution is analytically available; in practice a reference solver is needed",
+      "confidence": 0.80,
+      "alternatives": ["Chebfun (MATLAB)", "spectral solver in Python"]
+    },
+    {
+      "assumption": "No data normalization / input scaling described",
+      "basis": "Not mentioned; domains are already small (x in [-1,1] or [-5,5], t in [0,1])",
+      "confidence": 0.70,
+      "alternatives": ["Min-max scaling", "z-score normalization"]
+    }
+  ],
+
+  "confidence_annotations": {
+    "architecture": 0.88,
+    "mathematical_spec": 0.96,
+    "tensor_semantics": 0.79,
+    "training_pipeline": 0.83,
+    "evaluation_protocol": 0.95,
+    "implementation_assumptions": 0.79,
+    "overall_sir_confidence": 0.87
+  },
+
+  "ambiguities": [
+    {
+      "location": "Throughout paper",
+      "description": "Weight initialization not specified",
+      "primary_assumption": "Xavier uniform",
+      "alternatives": ["He init", "LeCun init"],
+      "confidence": 0.72
+    },
+    {
+      "location": "Section 3 — Discrete time",
+      "description": "Specific Gauss-Legendre RK tableau not printed in paper; referenced from [24]",
+      "primary_assumption": "Standard q-stage Gauss-Legendre nodes computed via numpy/scipy",
+      "alternatives": ["Look up precomputed tableau from Butcher 1964"],
+      "confidence": 0.82
+    },
+    {
+      "location": "Section 2.2 — Schrodinger example",
+      "description": "Whether h_x periodic BC is enforced at collocation points Nb or at all boundary evaluation points",
+      "primary_assumption": "Nb randomly sampled time points on boundary (x=-5 and x=5 evaluated together)",
+      "alternatives": ["Fixed uniform grid on t for BC"],
+      "confidence": 0.75
+    }
+  ]
+}

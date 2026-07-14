@@ -1,0 +1,16 @@
+# Dropout Reproduction — Development Dependencies
+-r requirements.txt
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Code quality
+black>=23.0.0
+ruff>=0.1.0
+
+# Notebook
+jupyter>=1.0.0
+ipykernel>=6.25.0
+nbformat>=5.9.0
+ipywidgets>=8.0.0

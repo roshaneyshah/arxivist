@@ -1,0 +1,17 @@
+{
+  "index_version": 1,
+  "total_papers": 1,
+  "papers": [
+    {
+      "paper_id": "paper_dymgnn_loan_default",
+      "title": "Attention-based dynamic multilayer graph neural networks for loan default prediction",
+      "domain": "Tabular",
+      "sir_version": 1,
+      "sir_confidence": 0.87,
+      "has_repo": true,
+      "has_notebook": true,
+      "has_comparison": false,
+      "last_updated": "2026-06-08T00:00:00Z"
+    }
+  ]
+}

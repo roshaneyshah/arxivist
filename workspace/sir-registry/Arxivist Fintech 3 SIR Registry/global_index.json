@@ -1,0 +1,19 @@
+{
+  "index_version": 1,
+  "total_papers": 1,
+  "papers": [
+    {
+      "paper_id": "paper_dissecting-characteristics-nonparametrically",
+      "title": "Dissecting Characteristics Nonparametrically",
+      "authors": ["Joachim Freyberger", "Andreas Neuhierl", "Michael Weber"],
+      "domain": "Quantitative Finance / Econometrics",
+      "source": "NBER Working Paper 23227",
+      "sir_version": 1,
+      "sir_confidence": 0.90,
+      "has_repo": true,
+      "has_notebook": true,
+      "has_comparison": false,
+      "last_updated": "2026-05-26T00:00:00Z"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+services:
+  trainer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: portfolio-rl:latest
+    volumes:
+      - ..:/workspace
+      - ../runs:/workspace/runs
+      - ../checkpoints:/workspace/checkpoints
+    environment:
+      - PYTHONPATH=/workspace/src
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: python train.py --config configs/lstm_2_ndx.yaml --quick-test

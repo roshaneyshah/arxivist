@@ -1,0 +1,12 @@
+{
+  "paper_id": "arxiv_2006_11239",
+  "paper_title": "Denoising Diffusion Probabilistic Models",
+  "authors": ["Jonathan Ho", "Ajay Jain", "Pieter Abbeel"],
+  "arxiv_url": "https://arxiv.org/abs/2006.11239",
+  "sir_version": 1,
+  "pipeline_stage_reached": 6,
+  "has_comparison_report": true,
+  "comparison_date": "2026-05-27",
+  "reproducibility_score": 0.92,
+  "score_confidence": "medium"
+}

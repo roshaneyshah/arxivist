@@ -1,0 +1,63 @@
+# ============================================================
+# Transformer (big) — "Attention Is All You Need"
+# Vaswani et al., NeurIPS 2017  |  arXiv:1706.03762
+# Overrides for the "big" model variant (Table 3, bottom row)
+# ============================================================
+
+model:
+  N: 6
+  d_model: 1024
+  d_ff: 4096
+  h: 16
+  d_k: 64                 # d_model / h = 64
+  d_v: 64
+  dropout: 0.3            # confidence: 0.97 — Table 3, big model row
+  max_seq_len: 512
+  weight_tying: true
+
+training:
+  optimizer: adam
+  beta1: 0.9
+  beta2: 0.98
+  epsilon: 1.0e-9
+  weight_decay: 0.0
+  warmup_steps: 4000
+  max_steps: 300000       # confidence: 0.97 — Section 5.2 (big model: 3.5 days)
+  label_smoothing: 0.1
+  max_tokens_per_batch: 25000
+  gradient_clipping: null
+  checkpoint_every_steps: 5000
+  log_every_steps: 100
+  avg_last_n_checkpoints: 20  # confidence: 0.97 — Section 6.1 (big model)
+  seed: 42
+
+data:
+  src_lang: en
+  tgt_lang: de
+  tokenizer: sentencepiece_bpe
+  vocab_size: 37000
+  shared_vocab: true
+  max_seq_len: 512
+  data_dir: data/wmt14_en_de
+  sp_model_path: data/wmt14_en_de/spm.model
+  train_prefix: train
+  val_prefix: newstest2013
+  test_prefix: newstest2014
+  pad_token: "<pad>"
+  bos_token: "<s>"
+  eos_token: "</s>"
+  pad_idx: 0
+
+evaluation:
+  beam_size: 4
+  length_penalty_alpha: 0.6
+  max_decode_len_offset: 50
+  eval_every_steps: 10000
+  bleu_tool: sacrebleu
+
+hardware:
+  device: cuda
+  num_gpus: 8
+  mixed_precision: null
+  dataloader_num_workers: 4
+  deterministic: false

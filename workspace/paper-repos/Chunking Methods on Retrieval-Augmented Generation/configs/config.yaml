@@ -1,0 +1,95 @@
+# =============================================================================
+# RAG Chunking Benchmark — Master Configuration
+# Paper: "Chunking Methods on Retrieval-Augmented Generation" (arXiv:2606.00881)
+# SIR confidence values annotated as comments on each parameter.
+# ASSUMED: marks parameters inferred from cited publications, not this paper.
+# =============================================================================
+
+chunkers:
+  # The four methods that robustly complete across all datasets (paper Section 5)
+  enabled: [fixed_size, recursive_semantic, sequential_hac, max_min]
+  # Optional: expect T (timeout) or S (spaCy memory) failures per paper Tables 1-2
+  optional: [texttiling, graphseg, lumberchunker, densex]
+
+  fixed_size:
+    chunk_size: 512      # SIR confidence: 0.99 — explicitly stated in paper Section 3
+    overlap: 50          # SIR confidence: 0.99 — explicitly stated in paper Section 3
+
+  recursive_semantic:
+    chunk_size: 512      # SIR confidence: 0.92
+    overlap: 50          # SIR confidence: 0.92
+    # Separator hierarchy: paragraphs → sentences → words (LangChain convention)
+    # TODO: verify exact separator list from LangChain version used in paper
+    separators: ["\n\n", "\n", ". ", " ", ""]
+
+  sequential_hac:
+    # ASSUMED: default from Qu et al. 2025 (NAACL) — cross-reference that paper
+    similarity_threshold: 0.85  # SIR confidence: 0.88
+    max_chunk_tokens: 512       # SIR confidence: 0.88
+
+  max_min:
+    # ASSUMED: alpha from Kiss et al. 2025 (Discover Computing) — cross-reference
+    alpha: 0.5           # SIR confidence: 0.83
+
+  texttiling:
+    w: 20                # pseudosentence size in words; SIR confidence: 0.90
+    k: 10                # block comparison size; SIR confidence: 0.90
+    smoothing_width: 2   # SIR confidence: 0.90
+    # EXPLICITLY STATED in paper Section 3: sentence-level boundary alignment
+    boundary_alignment: sentence
+
+embedding:
+  model: BAAI/bge-m3      # SIR confidence: 0.99 — explicitly stated in paper
+  batch_size: 32          # SIR confidence: 0.90 — reasonable default
+  device: cuda            # "cpu", "cuda", or "auto"
+  normalize: true         # Required for cosine similarity (EQ3)
+  embedding_dim: 1024     # SIR confidence: 0.90 — from bge-m3 model card, not paper
+
+reranker:
+  model: BAAI/bge-reranker-v2-m3  # SIR confidence: 0.99 — explicitly stated
+  device: cuda
+
+retrieval:
+  top_k_index: 10         # candidates retrieved before reranking
+  top_k_accuracy: 5       # for Accuracy@5 metric (EQ5); SIR confidence: 0.99
+  top_k_recall: 10        # for Recall@10 metric (EQ6); SIR confidence: 0.99
+  top_k_generation: 5     # chunks fed to generator in EXP2; SIR confidence: 0.99
+  index_type: cosine      # EQ3 uses cosine similarity
+
+generation:
+  model: gpt-oss-20b       # SIR confidence: 0.99 — explicitly stated
+  # Set via environment variables: OPENAI_API_BASE, OPENAI_API_KEY
+  api_base: null           # override with env var or set here
+  api_key: null
+  max_context_tokens: 4000 # SIR confidence: 0.99 — explicitly stated
+  temperature: 1.0         # ASSUMED: default; SIR confidence: 0.55 — not stated
+
+judge:
+  model: gpt-oss-20b       # SIR confidence: 0.99 — same model as generator
+  api_base: null
+  api_key: null
+  scale_min: 1             # SIR confidence: 0.99 — explicitly stated
+  scale_max: 5             # SIR confidence: 0.99 — explicitly stated
+
+datasets:
+  data_dir: data/
+  # All 11 configurations from the paper (Section 3 + Appendix A)
+  enabled:
+    - squad
+    - triviaqa
+    - triviaqa_merged
+    - poquad
+    - poquad_merged
+    - nq
+    - qasper
+    - gutenqa
+    - gutenqa_merged
+    - literaryqa
+    - novelqa
+
+pipeline:
+  timeout_hours: 48.0     # SIR confidence: 0.99 — explicitly stated Section 3
+  output_dir: results/
+  resume: true            # skip already-completed (method, dataset) pairs
+  log_failures: true      # record T and S markers per paper Tables 1-2
+  seed: 42

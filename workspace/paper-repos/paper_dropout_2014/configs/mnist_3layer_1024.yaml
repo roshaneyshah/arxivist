@@ -1,0 +1,47 @@
+# ============================================================
+# Dropout Reproduction — Primary Target Config
+# Paper: Srivastava et al., JMLR 2014
+# Target: Table 2 — "Dropout NN + max-norm constraint, ReLU, 3 layers 1024 units"
+# Expected test error: ~1.06%
+# ============================================================
+
+model:
+  input_dim: 784                  # MNIST: 28x28 pixels flattened
+  hidden_dims: [1024, 1024, 1024] # 3 hidden layers of 1024 units (Appendix B.1)
+  num_classes: 10
+  activation: "relu"              # Section 6.1.1: ReLU outperforms logistic
+  use_dropout: true
+  p_hidden: 0.5                   # Appendix B.1: p=0.5 for hidden layers
+  p_input: 0.8                    # Appendix B.1: p=0.8 for input layer
+  max_norm_c: 2.0                 # Appendix B.1: weight constraint c=2
+
+training:
+  optimizer: "sgd"
+  learning_rate: 0.01             # ASSUMED: not stated for MNIST; paper gives heuristic of 10-100x standard net lr
+  momentum: 0.95                  # Appendix B.1: "final momentum of 0.95"
+  weight_decay: 0.0               # Dropout + max-norm replaces L2 in primary config
+  n_weight_updates: 1000000       # Appendix B.1: 1 million weight updates
+  batch_size: 128                 # ASSUMED: not stated in paper; standard for MNIST SGD
+  use_max_norm: true              # Appendix B.1: max-norm constraint enabled
+  checkpoint_interval: 10000      # save checkpoint every N weight updates
+  log_interval: 1000              # log metrics every N weight updates (matches Fig 4 x-axis granularity)
+  seed: 42
+
+data:
+  dataset: "mnist"
+  data_dir: "./data"
+  val_size: 10000                 # Appendix B.1: held out 10,000 training images for validation
+  num_workers: 0                  # 0 = required on Windows (spawn); set to 4 on Linux/Mac
+  normalize_mean: 0.1307          # MNIST channel mean
+  normalize_std: 0.3081           # MNIST channel std
+
+hardware:
+  device: "auto"                  # "auto" selects cuda if available, else cpu
+  deterministic: false            # true enables torch.use_deterministic_algorithms (slower)
+
+experiment:
+  run_name: "mnist_3layer_1024_dropout"
+  output_dir: "./checkpoints"
+  log_dir: "./logs"
+  target_description: "Table 2: Dropout NN + max-norm, ReLU, 3 layers 1024 units"
+  expected_test_error_pct: 1.06

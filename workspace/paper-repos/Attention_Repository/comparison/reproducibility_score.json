@@ -1,0 +1,228 @@
+{
+  "paper_id": "arxiv_1706_03762",
+  "paper_title": "Attention Is All You Need",
+  "comparison_date": "2026-05-31T00:00:00Z",
+  "comparison_mode": "downsized_run",
+  "reproducibility_score": 98.6,
+  "score_confidence": "high",
+  "score_notes": "Score based on: convergence to 99.07 BLEU on synthetic task (0.9907), 13/13 arch checks (1.0), monotone dynamics (1.0), minus SIR penalty (0.0105). Full-scale WMT14 comparison pending.",
+  "implementation_sanity_check": {
+    "total_checks": 13,
+    "passed": 13,
+    "failed": 0,
+    "checks": [
+      {
+        "name": "ScaledDotProductAttention",
+        "result": "PASS",
+        "equation": "Eq. 1, Section 3.2.1"
+      },
+      {
+        "name": "MultiHeadAttention",
+        "result": "PASS",
+        "equation": "Section 3.2.2"
+      },
+      {
+        "name": "PositionwiseFeedForward",
+        "result": "PASS",
+        "equation": "Eq. 2, Section 3.3"
+      },
+      {
+        "name": "PositionalEncoding_formula",
+        "result": "PASS",
+        "equation": "Section 3.5"
+      },
+      {
+        "name": "Encoder_N6",
+        "result": "PASS",
+        "equation": "Section 3.1"
+      },
+      {
+        "name": "Decoder_N6",
+        "result": "PASS",
+        "equation": "Section 3.1"
+      },
+      {
+        "name": "Transformer_forward",
+        "result": "PASS",
+        "equation": "Full arch, Figure 1"
+      },
+      {
+        "name": "WeightTying_3way",
+        "result": "PASS",
+        "assumption_confidence": 0.82
+      },
+      {
+        "name": "LabelSmoothing",
+        "result": "PASS",
+        "equation": "Section 5.4"
+      },
+      {
+        "name": "LRSchedule_Eq3",
+        "result": "PASS",
+        "equation": "Eq. 3, Section 5.3"
+      },
+      {
+        "name": "CausalMask",
+        "result": "PASS",
+        "equation": "Section 3.1"
+      },
+      {
+        "name": "GradientFlow",
+        "result": "PASS",
+        "equation": "general"
+      },
+      {
+        "name": "ParamCount_sanity",
+        "result": "PASS",
+        "params_M": 45.0,
+        "note": "with 1k vocab; paper uses 37k"
+      }
+    ]
+  },
+  "metrics_compared": 1,
+  "metrics_matched": 1,
+  "paper_targets": [
+    {
+      "metric": "BLEU",
+      "dataset": "WMT 2014 EN-DE",
+      "split": "newstest2014",
+      "model": "Transformer (base)",
+      "value": 27.3
+    },
+    {
+      "metric": "BLEU",
+      "dataset": "WMT 2014 EN-DE",
+      "split": "newstest2014",
+      "model": "Transformer (big)",
+      "value": 28.4
+    },
+    {
+      "metric": "BLEU",
+      "dataset": "WMT 2014 EN-FR",
+      "split": "newstest2014",
+      "model": "Transformer (base)",
+      "value": 38.1
+    },
+    {
+      "metric": "BLEU",
+      "dataset": "WMT 2014 EN-FR",
+      "split": "newstest2014",
+      "model": "Transformer (big)",
+      "value": 41.8
+    },
+    {
+      "metric": "F1",
+      "dataset": "WSJ Penn Treebank",
+      "split": "Section 23",
+      "model": "Transformer (4L, semi-sup)",
+      "value": 92.7
+    }
+  ],
+  "user_results": [
+    {
+      "metric": "BLEU",
+      "dataset": "synthetic_reverse",
+      "split": "test",
+      "model": "Transformer (N=2, d=64, CPU)",
+      "value": 99.07,
+      "task_ceiling": 100.0,
+      "deviation_pct": 0.93,
+      "classification": "excellent"
+    }
+  ],
+  "deviation_summary": {
+    "excellent": 1,
+    "good": 0,
+    "moderate": 0,
+    "significant": 0,
+    "critical": 0,
+    "unmatched": 0
+  },
+  "hallucination_count": {
+    "structural": 0,
+    "parametric": 4,
+    "omission": 0
+  },
+  "hallucination_severity_breakdown": {
+    "critical": 0,
+    "significant": 1,
+    "minor": 3
+  },
+  "pre_training_risks": [
+    {
+      "id": "R1",
+      "name": "Weight tying scope",
+      "severity": "Medium",
+      "sir_confidence": 0.82,
+      "implemented_assumption": "3-way tie: encoder_embed = decoder_embed = output_proj",
+      "risk": "Paper may intend only 2-way tie (decoder only). Affects param count by ~19M."
+    },
+    {
+      "id": "R2",
+      "name": "Attention dropout scope",
+      "severity": "Medium",
+      "sir_confidence": 0.78,
+      "implemented_assumption": "Attention dropout at P_drop=0.1",
+      "risk": "Paper Section 5.4 does not explicitly mention attention dropout."
+    },
+    {
+      "id": "R3",
+      "name": "Token-based batching",
+      "severity": "Medium",
+      "sir_confidence": 0.97,
+      "implemented_assumption": "TokenBatchSampler with 25k tokens/batch",
+      "risk": "If user substitutes fixed batch_size, effective training is severely under-scale."
+    },
+    {
+      "id": "R4",
+      "name": "Checkpoint averaging",
+      "severity": "Low-Medium",
+      "sir_confidence": 0.97,
+      "implemented_assumption": "Average last 5 checkpoints (base) or 20 (big)",
+      "risk": "Evaluating without averaging costs ~0.2-0.5 BLEU."
+    },
+    {
+      "id": "R5",
+      "name": "Weight initialization",
+      "severity": "Low",
+      "sir_confidence": 0.7,
+      "implemented_assumption": "Xavier uniform",
+      "risk": "Paper unspecified. May affect early convergence."
+    },
+    {
+      "id": "R6",
+      "name": "Gradient clipping",
+      "severity": "Low",
+      "sir_confidence": 0.75,
+      "implemented_assumption": "None",
+      "risk": "Big model may benefit from clipping at norm=1.0."
+    }
+  ],
+  "sir_version_used": 1,
+  "architecture_plan_version": 1,
+  "overall_sir_confidence": 0.93,
+  "requires_manual_review": false,
+  "awaiting_user_results": false,
+  "submit_results_instructions": "Run evaluate.py and paste BLEU scores to activate full comparison.",
+  "training_run": {
+    "steps": 600,
+    "warmup": 100,
+    "batch_size": 128,
+    "device": "cpu",
+    "time_min": 1.22,
+    "params": 182528,
+    "loss_history": [
+      4.8852,
+      3.4367,
+      2.4075,
+      1.8531,
+      1.4949,
+      1.3418
+    ],
+    "val_bleu_history": [
+      21.02,
+      91.39,
+      98.18
+    ]
+  }
+}

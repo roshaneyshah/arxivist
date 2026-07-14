@@ -1,0 +1,43 @@
+# ============================================================
+# Dataset Size Ablation — Figure 10 in paper (Section 7.4)
+# Tests dropout vs no-dropout across training set sizes
+# Architecture: 784-1024-1024-2048-10
+# ============================================================
+
+model:
+  input_dim: 784
+  hidden_dims: [1024, 1024, 2048]  # Section 7.4: same architecture as Table 9
+  num_classes: 10
+  activation: "relu"
+  max_norm_c: 2.0
+
+training:
+  optimizer: "sgd"
+  learning_rate: 0.01              # ASSUMED
+  momentum: 0.95
+  n_weight_updates: 500000
+  batch_size: 128                  # ASSUMED
+  use_max_norm: true
+  seed: 42
+  log_interval: 1000
+
+ablation:
+  mode: "dataset_size_sweep"
+  dataset_sizes: [100, 500, 1000, 5000, 10000, 50000]  # Section 7.4: exact sizes from paper
+  use_dropout_values: [true, false]  # run both for each size
+
+data:
+  dataset: "mnist"
+  data_dir: "./data"
+  val_size: 10000
+  num_workers: 0                  # 0 = required on Windows; set to 4 on Linux/Mac
+  normalize_mean: 0.1307
+  normalize_std: 0.3081
+
+hardware:
+  device: "auto"
+
+experiment:
+  run_name: "mnist_dataset_size_sweep"
+  output_dir: "./checkpoints"
+  log_dir: "./logs"

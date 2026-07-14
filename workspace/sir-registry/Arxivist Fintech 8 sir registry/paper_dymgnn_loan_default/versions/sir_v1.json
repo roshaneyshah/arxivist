@@ -1,0 +1,531 @@
+{
+  "paper_id": "paper_dymgnn_loan_default",
+  "sir_version": 1,
+
+  "provenance": {
+    "title": "Attention-based dynamic multilayer graph neural networks for loan default prediction",
+    "authors": [
+      {"name": "Sahab Zandi", "affiliation": "Department of Statistical and Actuarial Sciences, Western University, Canada"},
+      {"name": "Kamesh Korangi", "affiliation": "Department of Decision Analytics and Risk, University of Southampton, UK"},
+      {"name": "María Óskarsdóttir", "affiliation": "Department of Computer Science, Reykjavík University, Iceland"},
+      {"name": "Christophe Mues", "affiliation": "Department of Decision Analytics and Risk, University of Southampton, UK"},
+      {"name": "Cristián Bravo", "affiliation": "Department of Statistical and Actuarial Sciences, Western University, Canada"}
+    ],
+    "arxiv_id": null,
+    "doi": "10.1016/j.ejor.2024.09.025",
+    "journal": "European Journal of Operational Research 321 (2025) 586–599",
+    "submission_date": "2024-01-29",
+    "accepted_date": "2024-09-11",
+    "available_online": "2024-09-14",
+    "abstract": "We present a model for credit risk assessment leveraging a dynamic multilayer network built from a Graph Neural Network and a Recurrent Neural Network, each layer reflecting a different source of network connection. We test our methodology using a dataset provided by U.S. mortgage financier Freddie Mac.",
+    "primary_domain": "Tabular",
+    "key_claims": [
+      "DYMGNN is a novel approach for node classification in multilayer networks, combining GNN+RNN+optional attention",
+      "GAT-LSTM-ATT on double-layer network achieves the best AUC (0.812) and F1 (0.851) among all configurations",
+      "Dynamic multilayer model outperforms static GNN baselines, XGBoost, Logistic Regression, and DNN",
+      "Custom soft attention mechanism over time snapshots consistently improves performance vs. without attention",
+      "Most recent snapshots receive the highest attention weight; longer lookback periods yield diminishing returns"
+    ],
+    "parsed_at": "2026-06-08T00:00:00Z"
+  },
+
+  "architecture": {
+    "confidence": 0.91,
+    "description": "Dynamic Multilayer GNN (DYMGNN). Two main families: GNN-RNN (without attention) and GNN-RNN-ATT (with temporal attention). GNN layer is either GCN or GAT; RNN is either LSTM or GRU. Best configuration is GAT-LSTM-ATT on double-layer network.",
+    "model_variants": [
+      {"name": "GCN-LSTM", "type": "GNN-RNN", "gnn": "GCN", "rnn": "LSTM", "attention": false},
+      {"name": "GCN-GRU",  "type": "GNN-RNN", "gnn": "GCN", "rnn": "GRU",  "attention": false},
+      {"name": "GAT-LSTM", "type": "GNN-RNN", "gnn": "GAT", "rnn": "LSTM", "attention": false},
+      {"name": "GAT-GRU",  "type": "GNN-RNN", "gnn": "GAT", "rnn": "GRU",  "attention": false},
+      {"name": "GCN-LSTM-ATT", "type": "GNN-RNN-ATT", "gnn": "GCN", "rnn": "LSTM", "attention": true},
+      {"name": "GCN-GRU-ATT",  "type": "GNN-RNN-ATT", "gnn": "GCN", "rnn": "GRU",  "attention": true},
+      {"name": "GAT-LSTM-ATT", "type": "GNN-RNN-ATT", "gnn": "GAT", "rnn": "LSTM", "attention": true, "primary": true},
+      {"name": "GAT-GRU-ATT",  "type": "GNN-RNN-ATT", "gnn": "GAT", "rnn": "GRU",  "attention": true}
+    ],
+    "primary_variant": "GAT-LSTM-ATT",
+    "components": [
+      {
+        "name": "SupraAdjacencyMatrix",
+        "type": "Data Structure",
+        "description": "Block matrix A ∈ R^{nl × nl} encoding intra-layer and inter-layer connections. For l=2 layers (area + company), n=nodes per layer, total size (2n × 2n).",
+        "confidence": 0.97
+      },
+      {
+        "name": "GCNLayer",
+        "type": "Graph Convolution",
+        "description": "Isotropic spectral GCN. Z = D̃^{-1/2} Ã D̃^{-1/2} X W^T. Ã = A + I_{nl} (self-loops added). Applied to each snapshot G^(t) independently.",
+        "input_shape": "[nl, d]",
+        "output_shape": "[nl, D]",
+        "confidence": 0.95
+      },
+      {
+        "name": "GATLayer",
+        "type": "Graph Attention",
+        "description": "Multi-head attention graph convolution. Computes attention coefficients e_ij via LeakyReLU, normalizes with softmax, aggregates neighbour embeddings weighted by alpha_ij. Best performing topological component.",
+        "input_shape": "[nl, d]",
+        "output_shape": "[nl, D]",
+        "num_heads": "not explicitly stated — multi-head used",
+        "confidence": 0.88
+      },
+      {
+        "name": "LSTMLayer",
+        "type": "Temporal Encoder",
+        "description": "Standard LSTM processing sequence of GNN embeddings [Z^(1)_i, ..., Z^(t)_i] for each node i. 3 gates: input, forget, output. H^(t) ∈ R^{nl×D}, C^(t) ∈ R^{nl×D}.",
+        "input_shape": "[tau, nl, D]",
+        "output_shape": "[tau, nl, D]",
+        "confidence": 0.96
+      },
+      {
+        "name": "GRULayer",
+        "type": "Temporal Encoder",
+        "description": "GRU with update and reset gates as alternative to LSTM. H^(t) ∈ R^{nl×D}.",
+        "input_shape": "[tau, nl, D]",
+        "output_shape": "[tau, nl, D]",
+        "confidence": 0.96
+      },
+      {
+        "name": "TemporalAttention",
+        "type": "Soft Attention over Timestamps",
+        "description": "Computes scalar attention score s^(t) = a_h H^(t) W_h, normalizes with softmax over τ timestamps to get β^(t), then H_att = Σ β^(t) H^(t). Re-weights snapshot hidden states by importance. Only in GNN-RNN-ATT family.",
+        "input_shape": "[tau, nl, D]",
+        "output_shape": "[nl, D]",
+        "confidence": 0.95
+      },
+      {
+        "name": "Decoder",
+        "type": "Feed-Forward Classifier",
+        "description": "Applied to node embeddings H^(τ) (no attention) or H_att (with attention). Architecture from Fig. 5: Dense(20,10) → ReLU → Dropout(0.5) → Dense(10,1) → Sigmoid.",
+        "input_shape": "[nl, D]",
+        "output_shape": "[nl, 1]",
+        "decoder_layers": [
+          {"type": "Linear", "in": "D", "out": 20},
+          {"type": "ReLU"},
+          {"type": "Dropout", "p": 0.5},
+          {"type": "Linear", "in": 20, "out": 10},
+          {"type": "ReLU"},
+          {"type": "Dropout", "p": 0.5},
+          {"type": "Linear", "in": 10, "out": 1},
+          {"type": "Sigmoid"}
+        ],
+        "confidence": 0.97,
+        "note": "Fig. 5 shows Dense(20,10) → ReLU → Dropout(0.5) → Dense(10,1) → Sigmoid. Intermediate hidden sizes explicitly given."
+      },
+      {
+        "name": "NodeDropout",
+        "type": "Graph Regularization",
+        "description": "50% of nodes randomly isolated (no connections) in each snapshot of a window. Applied during training only.",
+        "confidence": 0.95
+      }
+    ],
+    "network_types": {
+      "single_layer_area": "Nodes connected if first two digits of zip code match",
+      "single_layer_company": "Nodes connected if they share the same mortgage provider",
+      "double_layer_area_company": "Both layers combined in supra adjacency matrix; interlayer edges connect identical nodes across layers"
+    }
+  },
+
+  "mathematical_spec": {
+    "confidence": 0.96,
+    "equations": [
+      {
+        "id": "eq_gcn",
+        "name": "GCN Layer Forward Pass",
+        "latex": "Z = \\tilde{D}^{-1/2} \\tilde{A} \\tilde{D}^{-1/2} X W^T",
+        "description": "Ã = A + I_{nl} (adjacency with self-loops), D̃ diagonal degree matrix of Ã, W^T ∈ R^{d×D} learnable weight matrix, D = embedding size.",
+        "role": "topological-embedding",
+        "section": "3.2, Eq. 1",
+        "confidence": 0.97
+      },
+      {
+        "id": "eq_gat_score",
+        "name": "GAT Unnormalized Attention Score",
+        "latex": "e_{ij} = \\text{LeakyReLU}(a^T [W X_i \\| W X_j])",
+        "description": "‖ = concatenation, a^T ∈ R^{1×2D} learnable weight vector, W ∈ R^{D×d} weight matrix.",
+        "role": "topological-embedding",
+        "section": "3.2, Eq. 2",
+        "confidence": 0.97
+      },
+      {
+        "id": "eq_gat_softmax",
+        "name": "GAT Softmax Normalization",
+        "latex": "\\alpha_{ij} = \\frac{\\exp(e_{ij})}{\\sum_{k \\in \\mathcal{N}(v_i) \\cup \\{v_i\\}} \\exp(e_{ik})}",
+        "description": "N(v_i) = neighbourhood of node v_i, self-loop included.",
+        "role": "topological-embedding",
+        "section": "3.2, Eq. 3",
+        "confidence": 0.97
+      },
+      {
+        "id": "eq_gat_aggregate",
+        "name": "GAT Neighbourhood Aggregation",
+        "latex": "Z_i = \\sum_{j \\in \\mathcal{N}(v_i) \\cup \\{v_i\\}} \\alpha_{ij} W X_j",
+        "description": "Single-head formulation. Multi-head output aggregated by averaging.",
+        "role": "topological-embedding",
+        "section": "3.2, Eq. 4",
+        "confidence": 0.97
+      },
+      {
+        "id": "eq_lstm_input",
+        "name": "LSTM Input Gate",
+        "latex": "I^{(t)} = \\sigma(Z^{(t)} W_{ii} + H^{(t-1)} W_{ih} + b_i)",
+        "role": "temporal-embedding",
+        "section": "3.3, Eq. 5",
+        "confidence": 0.98
+      },
+      {
+        "id": "eq_lstm_forget",
+        "name": "LSTM Forget Gate",
+        "latex": "F^{(t)} = \\sigma(Z^{(t)} W_{fi} + H^{(t-1)} W_{fh} + b_f)",
+        "role": "temporal-embedding",
+        "section": "3.3, Eq. 6",
+        "confidence": 0.98
+      },
+      {
+        "id": "eq_lstm_cell",
+        "name": "LSTM Cell State",
+        "latex": "C^{(t)} = F^{(t)} \\odot C^{(t-1)} + I^{(t)} \\odot \\tanh(Z^{(t)} W_{ci} + H^{(t-1)} W_{ch} + b_c)",
+        "role": "temporal-embedding",
+        "section": "3.3, Eq. 7",
+        "confidence": 0.98
+      },
+      {
+        "id": "eq_lstm_output",
+        "name": "LSTM Output Gate",
+        "latex": "O^{(t)} = \\sigma(Z^{(t)} W_{oi} + H^{(t-1)} W_{oh} + b_o)",
+        "role": "temporal-embedding",
+        "section": "3.3, Eq. 8",
+        "confidence": 0.98
+      },
+      {
+        "id": "eq_lstm_hidden",
+        "name": "LSTM Hidden State",
+        "latex": "H^{(t)} = O^{(t)} \\odot \\tanh(C^{(t)})",
+        "role": "temporal-embedding",
+        "section": "3.3, Eq. 9",
+        "confidence": 0.98
+      },
+      {
+        "id": "eq_gru_update",
+        "name": "GRU Update Gate",
+        "latex": "U^{(t)} = \\sigma(Z^{(t)} W_{ui} + H^{(t-1)} W_{uh} + b_u)",
+        "role": "temporal-embedding",
+        "section": "3.3, Eq. 10",
+        "confidence": 0.98
+      },
+      {
+        "id": "eq_gru_reset",
+        "name": "GRU Reset Gate",
+        "latex": "R^{(t)} = \\sigma(Z^{(t)} W_{ri} + H^{(t-1)} W_{rh} + b_r)",
+        "role": "temporal-embedding",
+        "section": "3.3, Eq. 11",
+        "confidence": 0.98
+      },
+      {
+        "id": "eq_gru_hidden",
+        "name": "GRU Hidden State",
+        "latex": "H^{(t)} = (1 - U^{(t)}) \\odot H^{(t-1)} + U^{(t)} \\odot \\tanh(Z^{(t)} W_{hi} + (R^{(t)} \\odot H^{(t-1)}) W_{hh} + b_h)",
+        "role": "temporal-embedding",
+        "section": "3.3, Eq. 12",
+        "confidence": 0.98
+      },
+      {
+        "id": "eq_att_score",
+        "name": "Temporal Attention Score (unnormalized)",
+        "latex": "s^{(t)} = a_h H^{(t)} W_h",
+        "description": "a_h ∈ R^{1×nl}, W_h ∈ R^{D×1} are learnable weight vectors.",
+        "role": "temporal-attention",
+        "section": "3.5, Eq. 16",
+        "confidence": 0.95
+      },
+      {
+        "id": "eq_att_softmax",
+        "name": "Temporal Attention Softmax Normalization",
+        "latex": "\\beta^{(t)} = \\frac{\\exp(s^{(t)})}{\\sum_{k=1}^{\\tau} \\exp(s^{(k)})}",
+        "role": "temporal-attention",
+        "section": "3.5, Eq. 17",
+        "confidence": 0.95
+      },
+      {
+        "id": "eq_att_aggregate",
+        "name": "Attention-Weighted Hidden State Aggregation",
+        "latex": "H_{att} = \\sum_{t=1}^{\\tau} \\beta^{(t)} H^{(t)}",
+        "role": "temporal-attention",
+        "section": "3.5, Eq. 18",
+        "confidence": 0.95
+      },
+      {
+        "id": "eq_bce",
+        "name": "Binary Cross-Entropy Loss",
+        "latex": "\\mathcal{L} = -\\frac{1}{n} \\sum_{i=1}^{n} \\left[ Y_i \\cdot \\log(\\hat{Y}_i) + (1 - Y_i) \\cdot \\log(1 - \\hat{Y}_i) \\right]",
+        "role": "training-loss",
+        "section": "3.6, Eq. 19",
+        "confidence": 0.99
+      }
+    ]
+  },
+
+  "tensor_semantics": {
+    "confidence": 0.82,
+    "tensors": [
+      {"name": "X_t",      "shape": "[nl, d]",   "dtype": "float32", "role": "input",        "note": "Node feature matrix at snapshot t. n=nodes per layer, l=layers, d=16 features (Table 1)"},
+      {"name": "A_t",      "shape": "[nl, nl]",  "dtype": "float32", "role": "input",        "note": "Supra adjacency matrix at snapshot t"},
+      {"name": "Z_t",      "shape": "[nl, D]",   "dtype": "float32", "role": "intermediate", "note": "GNN embedding at snapshot t. D = embedding dimension (not stated, assumed 64)"},
+      {"name": "H_t",      "shape": "[nl, D]",   "dtype": "float32", "role": "intermediate", "note": "RNN hidden state at snapshot t"},
+      {"name": "C_t",      "shape": "[nl, D]",   "dtype": "float32", "role": "intermediate", "note": "LSTM cell state at snapshot t"},
+      {"name": "s_t",      "shape": "[nl, 1]",   "dtype": "float32", "role": "intermediate", "note": "Temporal attention score for snapshot t"},
+      {"name": "beta_t",   "shape": "[nl, 1]",   "dtype": "float32", "role": "intermediate", "note": "Normalized temporal attention weight for snapshot t"},
+      {"name": "H_att",    "shape": "[nl, D]",   "dtype": "float32", "role": "intermediate", "note": "Attention-weighted aggregated hidden state"},
+      {"name": "Y_hat",    "shape": "[nl, 1]",   "dtype": "float32", "role": "output",       "note": "Predicted default probability for each node"}
+    ]
+  },
+
+  "training_pipeline": {
+    "confidence": 0.91,
+    "framework": "PyTorch (implied by deep learning context; not explicitly stated)",
+    "optimizer": {
+      "name": "Adam",
+      "learning_rate": 0.001,
+      "confidence": 0.97,
+      "source": "Table C.1"
+    },
+    "epochs": {
+      "value": 200,
+      "confidence": 0.97,
+      "source": "Table C.1"
+    },
+    "early_stopping": {
+      "patience": 50,
+      "confidence": 0.97,
+      "source": "Table C.1"
+    },
+    "loss_function": "Binary Cross-Entropy (Eq. 19)",
+    "num_snapshots_tau": {
+      "value": 6,
+      "confidence": 0.99,
+      "source": "Section 4.2 — 'each window containing six snapshots'"
+    },
+    "num_windows_train": {
+      "value": 13,
+      "confidence": 0.97,
+      "source": "Section 4.2 — '13 windows for training'"
+    },
+    "num_windows_test": {
+      "value": 1,
+      "confidence": 0.97,
+      "source": "Section 4.2 — 'one window for testing'"
+    },
+    "rolling_window": {
+      "shift": "one month",
+      "confidence": 0.97,
+      "source": "Section 4.2"
+    },
+    "node_dropout": {
+      "value": 0.5,
+      "description": "50% of nodes randomly isolated in each snapshot",
+      "confidence": 0.97,
+      "source": "Section 4.2"
+    },
+    "embedding_dim_D": {
+      "value": "NOT STATED",
+      "assumed": 64,
+      "basis": "common default for GNN credit scoring tasks",
+      "confidence": 0.45
+    },
+    "gat_num_heads": {
+      "value": "NOT STATED",
+      "assumed": 4,
+      "basis": "common default for GAT; paper mentions multi-head averaging",
+      "confidence": 0.50
+    },
+    "prediction_horizon": {
+      "value": "12 months",
+      "confidence": 0.99,
+      "source": "Section 4.2"
+    },
+    "data_split": {
+      "train_origination": "2009–2010 loans",
+      "train_behavioral_period": "January 2012 – June 2013 (18 months, 13 rolling windows)",
+      "test_behavioral_period": "July 2013 – December 2013 (6 months, 1 window)",
+      "validation": "implied (hyperparameter tuning mentioned for baselines)",
+      "confidence": 0.95
+    },
+    "preprocessing": {
+      "outlier_capping": "99th and 1st percentile",
+      "null_imputation": "median imputation",
+      "numerical_scaling": "min-max normalization",
+      "categorical_encoding": "binary (one-vs-rest)",
+      "confidence": 0.97,
+      "source": "Section 4.1"
+    },
+    "compute": {
+      "processor": "AMD Milan 7413 @ 2.65GHz, 128M cache L3",
+      "cpu_cores_per_task": 2,
+      "gpu": "NVidia A100",
+      "memory_per_gpu": "40 GB",
+      "confidence": 0.99,
+      "source": "Table C.2"
+    }
+  },
+
+  "evaluation_protocol": {
+    "confidence": 0.97,
+    "task": "Binary node classification — loan default prediction (90+ days arrears within next 12 months)",
+    "dataset": {
+      "name": "Freddie Mac Single-Family Loan-Level (SFLL) Dataset",
+      "source": "https://www.freddiemac.com/research/datasets/sf-loanlevel-dataset",
+      "access": "Public (requires registration)",
+      "asset_class": "US residential mortgage loans",
+      "origination_years": "2009–2010",
+      "num_features": 16,
+      "class_imbalance": "minority=default: 7426 of 148520 total (5.0% default rate approx.)"
+    },
+    "metrics": ["AUC (Area Under ROC Curve)", "F1 score"],
+    "confidence_intervals": "95% bootstrap over test set",
+    "baselines": [
+      {"name": "Static GCN", "type": "GNN-based"},
+      {"name": "Static GAT", "type": "GNN-based"},
+      {"name": "Logistic Regression (LR)", "type": "non-GNN"},
+      {"name": "XGBoost (XGB)", "type": "non-GNN"},
+      {"name": "DNN", "type": "non-GNN"}
+    ],
+    "reported_results": {
+      "best_model": "GAT-LSTM-ATT on double-layer (Area + Company)",
+      "best_AUC":  0.812,
+      "best_AUC_ci": "±0.008",
+      "best_F1":   0.851,
+      "best_F1_ci": "±0.007",
+      "best_baseline_AUC": 0.805,
+      "best_baseline_name": "XGBoost",
+      "best_baseline_F1":   0.837,
+      "auc_gain_over_best_baseline_pp": 0.87,
+      "f1_gain_over_best_baseline_pp": 1.67,
+      "full_results_table": {
+        "static_gcn_area":    {"AUC": "0.701±0.014", "F1": "0.802±0.012"},
+        "static_gcn_company": {"AUC": "0.681±0.014", "F1": "0.798±0.013"},
+        "static_gcn_double":  {"AUC": "0.729±0.012", "F1": "0.810±0.012"},
+        "static_gat_area":    {"AUC": "0.752±0.013", "F1": "0.814±0.010"},
+        "static_gat_company": {"AUC": "0.746±0.011", "F1": "0.812±0.009"},
+        "static_gat_double":  {"AUC": "0.763±0.014", "F1": "0.817±0.012"},
+        "lr":                 {"AUC": "0.796±0.020", "F1": "0.824±0.013"},
+        "xgb":                {"AUC": "0.805±0.018", "F1": "0.837±0.012"},
+        "dnn":                {"AUC": "0.803±0.016", "F1": "0.833±0.014"},
+        "gat_lstm_att_area":  {"AUC": "0.810±0.012", "F1": "0.849±0.007"},
+        "gat_lstm_att_company": {"AUC": "0.808±0.010", "F1": "0.846±0.008"},
+        "gat_lstm_att_double": {"AUC": "0.812±0.008", "F1": "0.851±0.007"},
+        "gcn_lstm_att_double": {"AUC": "0.810±0.009", "F1": "0.848±0.006"},
+        "gat_gru_att_double":  {"AUC": "0.804±0.006", "F1": "0.843±0.008"}
+      }
+    },
+    "interpretability": {
+      "method": "SHAP (Shapley) values",
+      "top_features": ["if_delq_sts", "fico", "cnt_borr", "mths_remng"],
+      "attention_analysis": "Attention weights increase sharply from timestamp 3 to 6; peak at t=6 (~0.6)"
+    }
+  },
+
+  "implementation_assumptions": [
+    {
+      "id": "IA-01",
+      "assumption": "Embedding dimension D = 64",
+      "basis": "Not stated in paper. Common default for GNN credit-scoring tasks of this size.",
+      "confidence": 0.45,
+      "alternatives": [32, 128, 256],
+      "flag": "LOW_CONFIDENCE"
+    },
+    {
+      "id": "IA-02",
+      "assumption": "GAT uses 4 attention heads with average aggregation",
+      "basis": "Paper mentions multi-head GAT with averaging. 4 is the most common default in GAT literature.",
+      "confidence": 0.50,
+      "alternatives": [1, 2, 8],
+      "flag": "LOW_CONFIDENCE"
+    },
+    {
+      "id": "IA-03",
+      "assumption": "PyTorch framework (torch-geometric for GNN layers)",
+      "basis": "Deep learning paper; PyTorch is standard for custom GNN research; no framework stated.",
+      "confidence": 0.72,
+      "alternatives": ["TensorFlow + spektral", "DGL (Deep Graph Library)"]
+    },
+    {
+      "id": "IA-04",
+      "assumption": "Single LSTM/GRU layer (not stacked)",
+      "basis": "Paper does not mention stacking. Single layer is the default for sequence-to-sequence tasks on medium-size data.",
+      "confidence": 0.68,
+      "alternatives": ["2 LSTM layers", "bidirectional LSTM"]
+    },
+    {
+      "id": "IA-05",
+      "assumption": "Decoder hidden sizes: D→20→10→1 (from Fig. 5 label 'Dense Layer (20, 10)' and 'Dense Layer (10, 1)')",
+      "basis": "Fig. 5 explicitly labels layer sizes. Input to first Dense layer is embedding dim D.",
+      "confidence": 0.92
+    },
+    {
+      "id": "IA-06",
+      "assumption": "GCN uses a single layer (not stacked multi-hop)",
+      "basis": "Equations 1-4 describe single-layer operations. Paper does not mention stacking.",
+      "confidence": 0.75,
+      "alternatives": ["2-layer GCN", "3-layer GCN"]
+    },
+    {
+      "id": "IA-07",
+      "assumption": "Node features are normalized per-snapshot using the global min-max from training data",
+      "basis": "Paper says min-max scaling is used. Global scaling avoids train-test leakage.",
+      "confidence": 0.70
+    },
+    {
+      "id": "IA-08",
+      "assumption": "H^(0) and C^(0) initialized to zeros (not learned)",
+      "basis": "Paper says 'can be initialized with zeros or learned'; zeros is the simpler common default.",
+      "confidence": 0.65,
+      "alternatives": ["learned initialization"]
+    },
+    {
+      "id": "IA-09",
+      "assumption": "Batch training over all nodes in a snapshot window simultaneously (full-batch GNN)",
+      "basis": "GNN credit scoring typically uses full-batch since graph connectivity matters. No mini-batch GNN mentioned.",
+      "confidence": 0.72,
+      "alternatives": ["node-wise mini-batch with neighbor sampling"]
+    }
+  ],
+
+  "ambiguities": [
+    {
+      "location": "Section 3.2, Eq. 4 / Section 5",
+      "description": "Number of GAT attention heads H not specified. Paper says 'multiple attention heads' with averaging.",
+      "primary_assumption": 4,
+      "alternatives": [1, 2, 8],
+      "confidence": 0.50
+    },
+    {
+      "location": "Section 3.2 / Appendix C",
+      "description": "GNN embedding dimension D not specified anywhere in the paper.",
+      "primary_assumption": 64,
+      "alternatives": [32, 128, 256],
+      "confidence": 0.45
+    },
+    {
+      "location": "Section 4.2",
+      "description": "Validation set construction not described. Baselines are tuned on a 'validation dataset' but its size/construction is not given for the GNN models.",
+      "primary_assumption": "A portion of training windows used for validation",
+      "alternatives": ["Last training window used as validation", "Random split of training nodes"],
+      "confidence": 0.55
+    },
+    {
+      "location": "Section 4.2",
+      "description": "Node dropout (50% isolation) — whether applied at training time only or also at test time.",
+      "primary_assumption": "Training only",
+      "alternatives": ["Both train and test"],
+      "confidence": 0.72
+    }
+  ],
+
+  "confidence_annotations": {
+    "architecture": 0.91,
+    "mathematical_spec": 0.96,
+    "tensor_semantics": 0.82,
+    "training_pipeline": 0.91,
+    "evaluation_protocol": 0.97,
+    "implementation_assumptions": 0.68,
+    "overall_sir_confidence": 0.87
+  }
+}

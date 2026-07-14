@@ -1,0 +1,23 @@
+{
+  "paper_id": "paper_dissecting-characteristics-nonparametrically",
+  "paper_title": "Dissecting Characteristics Nonparametrically",
+  "current_stage": 3,
+  "stages_completed": [1, 2],
+  "sir_path": "sir-registry/paper_dissecting-characteristics-nonparametrically/sir.json",
+  "repo_path": "paper-repos/paper_dissecting-characteristics-nonparametrically/",
+  "artifacts": {
+    "sir": "sir-registry/paper_dissecting-characteristics-nonparametrically/sir.json",
+    "architecture_plan": null,
+    "repo_initialized": false,
+    "notebook_path": null,
+    "comparison_report": null
+  },
+  "confidence_flags": {
+    "overall_sir_confidence": 0.90,
+    "human_review_required": false
+  },
+  "human_review_required": false,
+  "loop_count": 0,
+  "created_at": "2026-05-26T00:00:00Z",
+  "last_updated": "2026-05-26T00:00:00Z"
+}

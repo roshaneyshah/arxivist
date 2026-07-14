@@ -1,0 +1,71 @@
+# SpotV2Net configuration
+# Values pulled from Table 8 (single-step, optimized) of arXiv:2401.06249 unless marked ASSUMED.
+# Paper section references are noted inline.
+
+model:
+  name: spotv2net
+  num_assets: 30                 # DJIA-30 constituents (Sec. 7)
+  num_lags: 42                   # L, Table 8 "Number of Lags" optimal value
+  hidden_dims: [400, 200]        # Table 8 "Dimension Hidden Layers" (single-step)
+  heads: 4                       # Table 8 "Number of Heads" (single-step)
+  concat_heads: true             # Table 8; Sec. 5: layer before prediction averages instead
+  negative_slope: 0.1            # Table 8 "Negative Slope LeakyReLu"
+  dropout_architecture: 0.1      # Table 8 "Dropout (Architecture)"
+  dropout_attention: 0.1         # Table 8 "Dropout (Attention)"
+  activation: relu               # Table 8 "Activation Function"
+  use_edge_features: true        # set false to reproduce SpotV2Net-NE ablation (Sec. 7.2)
+  output_dim: 1                  # 1 = single-step; set to 14 for multi-step functional forecast
+
+training:
+  loss: mse                      # Table 8 "Loss Function"
+  optimizer: adamw               # Table 8 "Optimizer"
+  learning_rate: 0.0001          # Table 8 "Learning Rate" (single-step)
+  beta1: 0.9                     # ASSUMED: PyTorch AdamW default, not disclosed in paper
+  beta2: 0.999                   # ASSUMED: PyTorch AdamW default, not disclosed in paper
+  weight_decay: 0.01             # ASSUMED: PyTorch AdamW default, not disclosed in paper
+  batch_size: 128                # Table 8 "Batch Size"
+  epochs: 120                    # Table 8 "Epochs"
+  lr_schedule: none              # ASSUMED: no scheduler listed in Table 8
+  gradient_clip_norm: null       # ASSUMED: not mentioned in paper
+  seed: 42                       # ASSUMED: not disclosed in paper
+  log_every_n_steps: 10
+  checkpoint_every_n_epochs: 5
+  checkpoint_metric: val_mse     # ASSUMED: best-checkpoint selection criterion
+
+data:
+  raw_data_dir: data/raw
+  processed_dir: data/processed
+  # Dataset split dates (Table 1)
+  train_start: "2020-06-01"
+  train_end: "2022-07-20"
+  val_start: "2022-07-21"
+  val_end: "2022-10-14"
+  test_start: "2022-10-15"
+  test_end: "2023-05-10"
+  grid_minutes: 30               # Sec. 7.1: 30-minute estimation grid
+  # Jump filtering (Sec. 7.1, footnote 7)
+  jump_filter_beta: 0.5
+  jump_filter_alpha: 0.5
+  # Fourier cutting frequencies — ASSUMED placeholders (Sec. 7.1 defers to
+  # Sanfelici & Toscano 2024 FMVol library; see data/README_data.md for calibration guidance).
+  fourier:
+    Nv_default: 200              # volatility cutoff, ASSUMED
+    Mv_default: 40               # volatility inversion cutoff, ASSUMED
+    Sv_default: 40               # vol-of-vol cutoff, ASSUMED
+    Lv_default: 8                # vol-of-vol inversion cutoff, ASSUMED
+    Nc_default: 200               # co-volatility cutoff, ASSUMED
+    Mc_default: 40               # co-volatility inversion cutoff, ASSUMED
+    Sc_default: 40               # co-vol-of-vol cutoff, ASSUMED
+    Lc_default: 8                # co-vol-of-vol inversion cutoff, ASSUMED
+
+evaluation:
+  metrics: [mse, qlike]          # Eq. 4/5 (single-step), Eq. 7/8 (multi-step)
+  mcs_bootstrap_reps: 5000       # Sec. 7.2: Model Confidence Set bootstrap replications
+  dm_test_significance: 0.05     # Sec. 7.2: Diebold-Mariano test significance level
+  gnn_explainer_top_k: 5         # Sec. 7.3: N* = 5 most influential nodes per subgraph
+
+hardware:
+  device: cuda_if_available
+  precision: float32
+  num_workers: 4
+  deterministic: false           # true forces reproducibility but may slow training

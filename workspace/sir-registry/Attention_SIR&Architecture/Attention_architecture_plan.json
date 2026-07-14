@@ -1,0 +1,518 @@
+{
+  "paper_id": "arxiv_1706_03762",
+  "plan_version": 1,
+  "created_at": "2026-05-31T00:00:00Z",
+
+  "framework": {
+    "primary": "pytorch",
+    "python_version": "3.10+",
+    "cuda_required": true,
+    "cuda_min_version": "11.8",
+    "use_huggingface": false,
+    "config_library": "yaml",
+    "reasoning": "Paper cites tensor2tensor (TensorFlow), but modern reproductions overwhelmingly use PyTorch. No HuggingFace — implementing from scratch for fidelity to the paper. YAML-only config keeps dependencies minimal."
+  },
+
+  "module_hierarchy": [
+    {
+      "path": "src/transformer/models/attention.py",
+      "description": "Scaled dot-product and multi-head attention",
+      "sir_modules_mapped": ["MultiHeadSelfAttention_Encoder", "MaskedMultiHeadSelfAttention_Decoder", "MultiHeadCrossAttention_Decoder"],
+      "classes": [
+        {
+          "name": "ScaledDotProductAttention",
+          "base_class": "nn.Module",
+          "public_methods": [
+            { "name": "forward", "signature": "(q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor]=None) -> Tuple[Tensor, Tensor]", "returns": "output [B,T,d_v], attn_weights [B,T,T]" }
+          ]
+        },
+        {
+          "name": "MultiHeadAttention",
+          "base_class": "nn.Module",
+          "public_methods": [
+            { "name": "__init__", "signature": "(d_model: int, h: int, dropout: float=0.1)", "returns": "None" },
+            { "name": "forward", "signature": "(q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor]=None) -> Tuple[Tensor, Tensor]", "returns": "output [B,T,d_model], attn_weights [B,h,T,T]" }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/transformer/models/feedforward.py",
+      "description": "Position-wise feed-forward network",
+      "sir_modules_mapped": ["FeedForward_Encoder", "FeedForward_Decoder"],
+      "classes": [
+        {
+          "name": "PositionwiseFeedForward",
+          "base_class": "nn.Module",
+          "public_methods": [
+            { "name": "__init__", "signature": "(d_model: int, d_ff: int, dropout: float=0.1)", "returns": "None" },
+            { "name": "forward", "signature": "(x: Tensor) -> Tensor", "returns": "[B, T, d_model]" }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/transformer/models/encoder.py",
+      "description": "Encoder layer and full encoder stack",
+      "sir_modules_mapped": ["EncoderStack", "EncoderLayer", "LayerNorm"],
+      "classes": [
+        {
+          "name": "EncoderLayer",
+          "base_class": "nn.Module",
+          "public_methods": [
+            { "name": "forward", "signature": "(x: Tensor, src_mask: Optional[Tensor]=None) -> Tensor", "returns": "[B, T, d_model]" }
+          ]
+        },
+        {
+          "name": "Encoder",
+          "base_class": "nn.Module",
+          "public_methods": [
+            { "name": "__init__", "signature": "(d_model: int, N: int, h: int, d_ff: int, dropout: float)", "returns": "None" },
+            { "name": "forward", "signature": "(x: Tensor, mask: Optional[Tensor]=None) -> Tensor", "returns": "[B, T, d_model]" }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/transformer/models/decoder.py",
+      "description": "Decoder layer and full decoder stack",
+      "sir_modules_mapped": ["DecoderStack", "DecoderLayer", "MaskedMultiHeadSelfAttention_Decoder", "MultiHeadCrossAttention_Decoder"],
+      "classes": [
+        {
+          "name": "DecoderLayer",
+          "base_class": "nn.Module",
+          "public_methods": [
+            { "name": "forward", "signature": "(x: Tensor, memory: Tensor, src_mask: Optional[Tensor], tgt_mask: Optional[Tensor]) -> Tensor", "returns": "[B, T_tgt, d_model]" }
+          ]
+        },
+        {
+          "name": "Decoder",
+          "base_class": "nn.Module",
+          "public_methods": [
+            { "name": "__init__", "signature": "(d_model: int, N: int, h: int, d_ff: int, dropout: float)", "returns": "None" },
+            { "name": "forward", "signature": "(x: Tensor, memory: Tensor, src_mask: Optional[Tensor], tgt_mask: Optional[Tensor]) -> Tensor", "returns": "[B, T_tgt, d_model]" }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/transformer/models/embeddings.py",
+      "description": "Token embeddings, positional encoding, weight tying",
+      "sir_modules_mapped": ["InputEmbedding", "OutputEmbedding", "PositionalEncoding"],
+      "classes": [
+        {
+          "name": "TokenEmbedding",
+          "base_class": "nn.Module",
+          "public_methods": [
+            { "name": "__init__", "signature": "(vocab_size: int, d_model: int)", "returns": "None" },
+            { "name": "forward", "signature": "(x: Tensor) -> Tensor", "returns": "[B, T, d_model]" }
+          ]
+        },
+        {
+          "name": "PositionalEncoding",
+          "base_class": "nn.Module",
+          "public_methods": [
+            { "name": "__init__", "signature": "(d_model: int, max_len: int=5000, dropout: float=0.1)", "returns": "None" },
+            { "name": "forward", "signature": "(x: Tensor) -> Tensor", "returns": "[B, T, d_model]" }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/transformer/models/transformer.py",
+      "description": "Top-level Transformer model assembling all components",
+      "sir_modules_mapped": ["EncoderStack", "DecoderStack", "PreSoftmaxLinear", "Softmax"],
+      "classes": [
+        {
+          "name": "Transformer",
+          "base_class": "nn.Module",
+          "public_methods": [
+            { "name": "__init__", "signature": "(config: TransformerConfig)", "returns": "None" },
+            { "name": "forward", "signature": "(src: Tensor, tgt: Tensor, src_mask: Optional[Tensor], tgt_mask: Optional[Tensor]) -> Tensor", "returns": "logits [B, T_tgt, vocab_size]" },
+            { "name": "encode", "signature": "(src: Tensor, src_mask: Optional[Tensor]) -> Tensor", "returns": "memory [B, T_src, d_model]" },
+            { "name": "decode", "signature": "(tgt: Tensor, memory: Tensor, src_mask: Optional[Tensor], tgt_mask: Optional[Tensor]) -> Tensor", "returns": "[B, T_tgt, d_model]" },
+            { "name": "tie_weights", "signature": "() -> None", "returns": "None — ties embed/unembed weight matrices" }
+          ]
+        },
+        {
+          "name": "TransformerConfig",
+          "base_class": "dataclass",
+          "public_methods": [
+            { "name": "from_yaml", "signature": "(path: str) -> TransformerConfig", "returns": "TransformerConfig" }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/transformer/data/dataset.py",
+      "description": "Translation dataset loading, tokenization, batching",
+      "sir_modules_mapped": [],
+      "classes": [
+        {
+          "name": "TranslationDataset",
+          "base_class": "torch.utils.data.Dataset",
+          "public_methods": [
+            { "name": "__init__", "signature": "(src_file: str, tgt_file: str, tokenizer: Any, max_len: int=512)", "returns": "None" },
+            { "name": "__len__", "signature": "() -> int", "returns": "int" },
+            { "name": "__getitem__", "signature": "(idx: int) -> Dict[str, Tensor]", "returns": "dict with src_ids, tgt_ids, src_len, tgt_len" }
+          ]
+        },
+        {
+          "name": "TokenBatchSampler",
+          "base_class": "Sampler",
+          "public_methods": [
+            { "name": "__init__", "signature": "(lengths: List[int], max_tokens: int=25000)", "returns": "None" },
+            { "name": "__iter__", "signature": "() -> Iterator[List[int]]", "returns": "Batches of indices grouped by approximate length" }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/transformer/data/tokenizer.py",
+      "description": "BPE tokenizer wrapper (sentencepiece)",
+      "sir_modules_mapped": [],
+      "classes": [
+        {
+          "name": "BPETokenizer",
+          "base_class": "object",
+          "public_methods": [
+            { "name": "encode", "signature": "(text: str) -> List[int]", "returns": "token ids" },
+            { "name": "decode", "signature": "(ids: List[int]) -> str", "returns": "string" },
+            { "name": "vocab_size", "signature": "() -> int", "returns": "int" }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/transformer/training/trainer.py",
+      "description": "Training loop, optimizer, LR schedule, checkpointing",
+      "sir_modules_mapped": [],
+      "classes": [
+        {
+          "name": "TransformerTrainer",
+          "base_class": "object",
+          "public_methods": [
+            { "name": "__init__", "signature": "(model: Transformer, config: dict, device: str)", "returns": "None" },
+            { "name": "train", "signature": "(train_loader: DataLoader, val_loader: DataLoader) -> None", "returns": "None" },
+            { "name": "train_step", "signature": "(batch: Dict[str, Tensor]) -> float", "returns": "loss value" },
+            { "name": "save_checkpoint", "signature": "(step: int, path: str) -> None", "returns": "None" },
+            { "name": "load_checkpoint", "signature": "(path: str) -> int", "returns": "step number resumed from" }
+          ]
+        },
+        {
+          "name": "WarmupRsqrtScheduler",
+          "base_class": "torch.optim.lr_scheduler._LRScheduler",
+          "public_methods": [
+            { "name": "get_lr", "signature": "() -> List[float]", "returns": "current learning rates per param group" }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/transformer/training/losses.py",
+      "description": "Label-smoothed cross-entropy loss",
+      "sir_modules_mapped": [],
+      "classes": [
+        {
+          "name": "LabelSmoothedCrossEntropy",
+          "base_class": "nn.Module",
+          "public_methods": [
+            { "name": "__init__", "signature": "(vocab_size: int, smoothing: float=0.1, ignore_index: int=-100)", "returns": "None" },
+            { "name": "forward", "signature": "(logits: Tensor, targets: Tensor) -> Tensor", "returns": "scalar loss" }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/transformer/evaluation/metrics.py",
+      "description": "BLEU score computation and translation evaluation",
+      "sir_modules_mapped": [],
+      "classes": [
+        {
+          "name": "BLEUEvaluator",
+          "base_class": "object",
+          "public_methods": [
+            { "name": "compute_bleu", "signature": "(hypotheses: List[str], references: List[str]) -> float", "returns": "BLEU score 0-100" },
+            { "name": "evaluate_dataset", "signature": "(model: Transformer, data_loader: DataLoader, tokenizer: Any) -> Dict[str, float]", "returns": "dict with bleu and ppl" }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/transformer/utils/masking.py",
+      "description": "Causal mask and padding mask generation utilities",
+      "sir_modules_mapped": ["causal_mask", "src_padding_mask"],
+      "classes": [
+        {
+          "name": "MaskFactory",
+          "base_class": "object",
+          "public_methods": [
+            { "name": "make_causal_mask", "signature": "(seq_len: int, device: str) -> Tensor", "returns": "[T, T] bool" },
+            { "name": "make_padding_mask", "signature": "(token_ids: Tensor, pad_idx: int) -> Tensor", "returns": "[B, 1, 1, T] bool" }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/transformer/utils/config.py",
+      "description": "Config loading and TransformerConfig dataclass",
+      "sir_modules_mapped": [],
+      "classes": [
+        {
+          "name": "TransformerConfig",
+          "base_class": "dataclass",
+          "public_methods": [
+            { "name": "from_yaml", "signature": "(path: str) -> TransformerConfig", "returns": "TransformerConfig" },
+            { "name": "to_yaml", "signature": "(path: str) -> None", "returns": "None" }
+          ]
+        }
+      ]
+    }
+  ],
+
+  "tensor_flows": [
+    {
+      "name": "EncoderForwardPass",
+      "input": { "name": "src_token_ids", "shape": "[B, T_src]", "dtype": "int64" },
+      "output": { "name": "encoder_memory", "shape": "[B, T_src, 512]", "dtype": "float32" },
+      "steps": [
+        "src_embed = token_embedding(src_token_ids) * sqrt(d_model)  → [B, T_src, 512]",
+        "src_embed = positional_encoding(src_embed)                  → [B, T_src, 512]  (dropout applied)",
+        "src_mask = make_padding_mask(src_token_ids, pad_idx)        → [B, 1, 1, T_src]",
+        "for each EncoderLayer (N=6):",
+        "  residual = x",
+        "  x = self_attention(x, x, x, mask=src_mask)               → [B, T_src, 512]",
+        "  x = dropout(x) + residual",
+        "  x = layer_norm(x)                                         → [B, T_src, 512]",
+        "  residual = x",
+        "  x = feedforward(x)                                        → [B, T_src, 512]",
+        "  x = dropout(x) + residual",
+        "  x = layer_norm(x)                                         → [B, T_src, 512]",
+        "return x as encoder_memory                                   → [B, T_src, 512]"
+      ]
+    },
+    {
+      "name": "DecoderForwardPass",
+      "input": { "name": "tgt_token_ids", "shape": "[B, T_tgt]", "dtype": "int64" },
+      "output": { "name": "logits", "shape": "[B, T_tgt, vocab_size]", "dtype": "float32" },
+      "steps": [
+        "tgt_embed = token_embedding(tgt_token_ids) * sqrt(d_model)  → [B, T_tgt, 512]",
+        "tgt_embed = positional_encoding(tgt_embed)                  → [B, T_tgt, 512]  (dropout applied)",
+        "tgt_mask = causal_mask(T_tgt) & padding_mask(tgt_ids)       → [B, 1, T_tgt, T_tgt]",
+        "for each DecoderLayer (N=6):",
+        "  residual = x",
+        "  x = masked_self_attention(x, x, x, mask=tgt_mask)        → [B, T_tgt, 512]",
+        "  x = dropout(x) + residual; x = layer_norm(x)",
+        "  residual = x",
+        "  x = cross_attention(q=x, k=memory, v=memory, mask=src_mask) → [B, T_tgt, 512]",
+        "  x = dropout(x) + residual; x = layer_norm(x)",
+        "  residual = x",
+        "  x = feedforward(x)                                        → [B, T_tgt, 512]",
+        "  x = dropout(x) + residual; x = layer_norm(x)",
+        "logits = linear(x)  [weight-tied to embedding]              → [B, T_tgt, vocab_size]",
+        "return logits (no softmax applied — loss handles it)"
+      ]
+    },
+    {
+      "name": "ScaledDotProductAttentionPass",
+      "input": { "name": "Q,K,V projections", "shape": "[B, h, T, d_k]", "dtype": "float32" },
+      "output": { "name": "attention_output", "shape": "[B, h, T, d_v]", "dtype": "float32" },
+      "steps": [
+        "scores = matmul(Q, K.transpose(-2,-1)) / sqrt(d_k)          → [B, h, T_q, T_k]",
+        "if mask is not None: scores = scores.masked_fill(mask==0, -1e9)",
+        "attn_weights = softmax(scores, dim=-1)                       → [B, h, T_q, T_k]",
+        "attn_weights = dropout(attn_weights)  # attention dropout",
+        "output = matmul(attn_weights, V)                             → [B, h, T_q, d_v]",
+        "return output, attn_weights"
+      ]
+    },
+    {
+      "name": "MultiHeadAttentionPass",
+      "input": { "name": "Q,K,V", "shape": "[B, T, d_model]", "dtype": "float32" },
+      "output": { "name": "mha_output", "shape": "[B, T, d_model]", "dtype": "float32" },
+      "steps": [
+        "Q_proj = linear_Q(Q).view(B, T_q, h, d_k).transpose(1,2)   → [B, h, T_q, d_k]",
+        "K_proj = linear_K(K).view(B, T_k, h, d_k).transpose(1,2)   → [B, h, T_k, d_k]",
+        "V_proj = linear_V(V).view(B, T_v, h, d_v).transpose(1,2)   → [B, h, T_v, d_v]",
+        "context, attn = scaled_dot_product_attention(Q_proj, K_proj, V_proj, mask)",
+        "context = context.transpose(1,2).contiguous().view(B, T_q, h*d_v)  → [B, T_q, 512]",
+        "output = linear_O(context)                                   → [B, T_q, d_model]",
+        "return output, attn"
+      ]
+    }
+  ],
+
+  "config_schema": {
+    "model": {
+      "N": 6,
+      "d_model": 512,
+      "d_ff": 2048,
+      "h": 8,
+      "d_k": 64,
+      "d_v": 64,
+      "dropout": 0.1,
+      "max_seq_len": 512,
+      "weight_tying": true,
+      "_comments": {
+        "N": "# confidence: 0.97 — explicit in paper",
+        "d_model": "# confidence: 0.97 — explicit in paper",
+        "d_ff": "# confidence: 0.97 — explicit in paper",
+        "h": "# confidence: 0.97 — explicit in paper",
+        "dropout": "# confidence: 0.97 — Section 5.4",
+        "weight_tying": "# confidence: 0.82 — ASSUMED: 3-way tie; paper implies but does not diagram explicitly"
+      }
+    },
+    "training": {
+      "optimizer": "adam",
+      "beta1": 0.9,
+      "beta2": 0.98,
+      "epsilon": 1e-9,
+      "warmup_steps": 4000,
+      "max_steps": 100000,
+      "label_smoothing": 0.1,
+      "max_tokens_per_batch": 25000,
+      "checkpoint_every_steps": 1000,
+      "avg_last_n_checkpoints": 5,
+      "_comments": {
+        "weight_decay": "# ASSUMED: 0.0 — not mentioned in paper; standard Adam default",
+        "gradient_clipping": "# ASSUMED: none — not mentioned in paper"
+      }
+    },
+    "data": {
+      "src_lang": "en",
+      "tgt_lang": "de",
+      "tokenizer": "sentencepiece_bpe",
+      "vocab_size": 37000,
+      "shared_vocab": true,
+      "max_seq_len": 512,
+      "data_dir": "data/wmt14_en_de",
+      "train_prefix": "train",
+      "val_prefix": "newstest2013",
+      "test_prefix": "newstest2014",
+      "pad_token": "<pad>",
+      "bos_token": "<s>",
+      "eos_token": "</s>"
+    },
+    "evaluation": {
+      "beam_size": 4,
+      "length_penalty_alpha": 0.6,
+      "max_decode_len_offset": 50,
+      "eval_every_steps": 5000,
+      "bleu_tool": "sacrebleu"
+    },
+    "hardware": {
+      "device": "cuda",
+      "num_gpus": 8,
+      "mixed_precision": null,
+      "dataloader_num_workers": 4
+    }
+  },
+
+  "dependencies": {
+    "runtime": [
+      { "package": "torch", "version": ">=2.1.0", "reason": "Core deep learning framework" },
+      { "package": "sentencepiece", "version": ">=0.1.99", "reason": "BPE tokenization as described in paper" },
+      { "package": "sacrebleu", "version": ">=2.3.1", "reason": "Standard BLEU evaluation for WMT tasks" },
+      { "package": "pyyaml", "version": ">=6.0", "reason": "Config file loading" },
+      { "package": "tqdm", "version": ">=4.65.0", "reason": "Training progress display" },
+      { "package": "numpy", "version": ">=1.24.0", "reason": "Data processing utilities" },
+      { "package": "datasets", "version": ">=2.14.0", "reason": "WMT14 dataset download via HuggingFace datasets hub" }
+    ],
+    "dev": [
+      { "package": "pytest", "version": ">=7.4.0" },
+      { "package": "pytest-cov", "version": ">=4.1.0" },
+      { "package": "black", "version": ">=23.0.0" },
+      { "package": "ruff", "version": ">=0.1.0" },
+      { "package": "mypy", "version": ">=1.5.0" },
+      { "package": "jupyter", "version": ">=1.0.0" }
+    ]
+  },
+
+  "entrypoints": [
+    {
+      "filename": "train.py",
+      "purpose": "Main training script for Transformer from scratch",
+      "cli_args": [
+        { "flag": "--config", "type": "str", "required": true, "default": null, "help": "Path to YAML config file" },
+        { "flag": "--resume", "type": "str", "required": false, "default": null, "help": "Path to checkpoint to resume from" },
+        { "flag": "--output-dir", "type": "str", "required": false, "default": "checkpoints/", "help": "Directory to save checkpoints" },
+        { "flag": "--wandb", "type": "bool", "required": false, "default": false, "help": "Enable Weights & Biases logging" }
+      ]
+    },
+    {
+      "filename": "evaluate.py",
+      "purpose": "Run BLEU evaluation on a test set with a trained checkpoint",
+      "cli_args": [
+        { "flag": "--config", "type": "str", "required": true, "default": null, "help": "Path to YAML config" },
+        { "flag": "--checkpoint", "type": "str", "required": true, "default": null, "help": "Path to model checkpoint" },
+        { "flag": "--split", "type": "str", "required": false, "default": "test", "help": "Dataset split: val or test" },
+        { "flag": "--output-file", "type": "str", "required": false, "default": "results/translations.txt", "help": "Where to write translations" }
+      ]
+    },
+    {
+      "filename": "translate.py",
+      "purpose": "Interactive single-sentence translation (beam search)",
+      "cli_args": [
+        { "flag": "--config", "type": "str", "required": true, "default": null, "help": "Path to YAML config" },
+        { "flag": "--checkpoint", "type": "str", "required": true, "default": null, "help": "Path to model checkpoint" },
+        { "flag": "--src", "type": "str", "required": false, "default": null, "help": "Source sentence (if omitted, reads from stdin)" },
+        { "flag": "--beam-size", "type": "int", "required": false, "default": 4, "help": "Beam search width" }
+      ]
+    },
+    {
+      "filename": "prepare_data.py",
+      "purpose": "Download WMT14 data and train SentencePiece tokenizer",
+      "cli_args": [
+        { "flag": "--config", "type": "str", "required": true, "default": null, "help": "Path to YAML config" },
+        { "flag": "--output-dir", "type": "str", "required": false, "default": "data/", "help": "Where to save processed data" }
+      ]
+    }
+  ],
+
+  "docker_spec": {
+    "base_image": "pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime",
+    "system_deps": ["git", "wget", "build-essential", "sentencepiece"],
+    "workdir": "/workspace/transformer",
+    "volume_mounts": ["/workspace/transformer/data", "/workspace/transformer/checkpoints"],
+    "default_cmd": "python train.py --config configs/base.yaml"
+  },
+
+  "risk_assessment": [
+    {
+      "severity": "Medium",
+      "description": "Weight tying (3-way: encoder_embed = decoder_embed = pre_softmax_linear^T) is stated in the paper but exact tying scope is ambiguous (SIR confidence 0.82). Incorrect tying changes parameter count and may degrade results.",
+      "source": "SIR ambiguity #2, Section 3.4",
+      "mitigation": "Implement 3-way tying as primary; add config flag `weight_tying: true/false` to ablate."
+    },
+    {
+      "severity": "Medium",
+      "description": "Attention dropout scope unclear (SIR confidence 0.78). Paper only explicitly mentions residual and embedding dropout. Applying attention dropout affects training dynamics.",
+      "source": "SIR ambiguity #1, Section 5.4",
+      "mitigation": "Add separate `attention_dropout` config field defaulting to same value as `dropout`. Add TODO comment in code."
+    },
+    {
+      "severity": "Medium",
+      "description": "Token-based batching (25k tokens/batch) requires a custom TokenBatchSampler. Standard DataLoader with fixed batch_size will NOT reproduce the training regime.",
+      "source": "SIR training_pipeline, Section 5.1",
+      "mitigation": "Implement TokenBatchSampler with sort-by-length + bucket strategy. Unit test against expected token counts."
+    },
+    {
+      "severity": "Low",
+      "description": "LR schedule formula is fully specified (Eq. 3) but PyTorch's standard schedulers do not implement warmup_rsqrt_decay. Custom scheduler class required.",
+      "source": "SIR mathematical_spec, Section 5.3",
+      "mitigation": "Implement WarmupRsqrtScheduler as custom _LRScheduler subclass. Verified against formula values at step 1, 4000, 10000."
+    },
+    {
+      "severity": "Low",
+      "description": "Weight initialization strategy not specified in paper (SIR confidence 0.70). Xavier uniform is the standard default for Transformer implementations but affects training stability.",
+      "source": "SIR implementation_assumptions[0]",
+      "mitigation": "Apply Xavier uniform init in model __init__. Document clearly. Add config flag to swap if needed."
+    },
+    {
+      "severity": "Low",
+      "description": "WMT14 EN-DE is ~4.5M sentence pairs and requires ~10GB disk. SentencePiece model must be trained on the corpus before tokenizing.",
+      "source": "SIR evaluation_protocol, Section 5.1",
+      "mitigation": "Include prepare_data.py script to automate download, SP training, and binarization. Document estimated time/disk in README."
+    }
+  ]
+}

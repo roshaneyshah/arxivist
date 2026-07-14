@@ -1,0 +1,40 @@
+{
+  "paper_id": "arxiv_2605_17307",
+  "title": "Deep Reinforcement Learning Framework for Diversified Portfolio Management Across Global Equity Markets",
+  "authors": ["Kamil Kashif", "Robert Ślepaczuk"],
+  "arxiv_id": "2605.17307",
+  "arxiv_url": "https://arxiv.org/abs/2605.17307",
+  "pdf_url": "https://arxiv.org/pdf/2605.17307",
+  "html_url": "https://arxiv.org/html/2605.17307v1",
+  "doi": "10.48550/arXiv.2605.17307",
+  "submission_date": "2026-05-17",
+  "domain": "RL / Quantitative Finance / Portfolio Management",
+  "subjects": ["q-fin.PM", "cs.AI", "cs.LG", "cs.NE", "q-fin.TR"],
+  "license": "CC BY-NC-ND 4.0",
+  "provenance": {
+    "source_pdf_local_path": "%TEMP%/arxivist_pdf/2605.17307.pdf",
+    "source_pdf_size_bytes": 15487373,
+    "extraction_method": "ArXivist Stage 1 (Copilot-driven, HTML-augmented)",
+    "extraction_date": "2026-05-24T12:00:00Z",
+    "arxivist_version": "0.1.0",
+    "sir_path": "workspace/sir-registry/arxiv_2605_17307/sir.json",
+    "repo_path": "workspace/paper-repos/arxiv_2605_17307/"
+  },
+  "key_metrics_summary": {
+    "primary_metric": "IR2 (Modified Information Ratio)",
+    "best_rl_strategy_per_market": {
+      "NASDAQ-100": {"strategy": "LSTM_2", "IR2": 0.4554, "Sharpe": 0.8759},
+      "Nikkei 225":  {"strategy": "LSTM_1", "IR2": 0.1536, "Sharpe": 0.6105},
+      "Euro Stoxx 50": {"strategy": "LSTM_2", "IR2": 0.1462, "Sharpe": 0.5807},
+      "Ensemble":    {"strategy": "LSTM_1", "IR2": 0.4096, "Sharpe": 0.9062}
+    },
+    "buy_and_hold_baseline": {
+      "NASDAQ-100": {"IR2": 0.5180},
+      "Nikkei 225":  {"IR2": 0.0183},
+      "Euro Stoxx 50": {"IR2": 0.0642}
+    }
+  },
+  "sir_versions": [
+    {"version": 1, "created_at": "2026-05-24T12:00:00Z", "confidence": 0.88}
+  ]
+}

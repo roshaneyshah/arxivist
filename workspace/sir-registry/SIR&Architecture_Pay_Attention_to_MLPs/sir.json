@@ -1,0 +1,448 @@
+{
+  "paper_id": "arxiv_2105_08050",
+  "sir_version": 1,
+
+  "provenance": {
+    "title": "Pay Attention to MLPs",
+    "authors": [
+      {"name": "Hanxiao Liu", "affiliation": "Google Research, Brain Team", "email": "hanxiaol@google.com"},
+      {"name": "Zihang Dai",  "affiliation": "Google Research, Brain Team", "email": "zihangd@google.com"},
+      {"name": "David R. So", "affiliation": "Google Research, Brain Team", "email": "davidso@google.com"},
+      {"name": "Quoc V. Le",  "affiliation": "Google Research, Brain Team", "email": "qvl@google.com"}
+    ],
+    "arxiv_id": "2105.08050",
+    "arxiv_version": "v2",
+    "submission_date": "2021-05-17",
+    "last_revised": "2021-06-01",
+    "abstract_truncated": "We propose gMLP, a simple MLP-based architecture with gating (Spatial Gating Unit) that can perform as well as Transformers in key language and vision applications without self-attention. gMLP achieves parity with Transformers on BERT pretraining perplexity and matches DeiT on ImageNet, demonstrating self-attention is not essential for scaling.",
+    "domain": "NLP / CV",
+    "venue": "NeurIPS 2021",
+    "key_claims": [
+      "gMLP (MLPs with gating) matches Transformer performance on BERT pretraining perplexity and ViT image classification.",
+      "Self-attention is not a necessary ingredient for scaling up ML models — model capacity matters more.",
+      "gMLP scales with data and compute at a rate comparable to Transformers (empirical scaling laws hold for both).",
+      "Adding a tiny single-head self-attention (aMLP) to gMLP yields a hybrid that outperforms Transformers of similar capacity on all tested NLP tasks.",
+      "gMLPs learn Toeplitz-like (shift-invariant) spatial weight matrices on MLM tasks and locally-receptive spatial weights on vision tasks — both emergent from training, not imposed."
+    ],
+    "parsed_at": "2026-06-11T00:00:00Z"
+  },
+
+  "architecture": {
+    "confidence": 0.95,
+    "primary_model": "gMLP",
+    "variants": [
+      {
+        "name": "gMLP (base)",
+        "task": ["NLP/MLM", "ImageNet Classification"],
+        "description": "Stack of L identical gMLP blocks. No positional encodings. No self-attention."
+      },
+      {
+        "name": "aMLP",
+        "task": ["NLP/MLM"],
+        "description": "gMLP augmented with a single tiny self-attention head (d_attn=64 or 128) injected into the SGU gating branch."
+      }
+    ],
+
+    "model_sizes": {
+      "vision": [
+        {"name": "gMLP-Ti", "L": 30, "d_model": 128, "d_ffn": 768,  "params_M": 5.9,  "flops_B": 2.7,  "stoch_depth_survival": 1.00},
+        {"name": "gMLP-S",  "L": 30, "d_model": 256, "d_ffn": 1536, "params_M": 19.5, "flops_B": 8.9,  "stoch_depth_survival": 0.95},
+        {"name": "gMLP-B",  "L": 30, "d_model": 512, "d_ffn": 3072, "params_M": 73.4, "flops_B": 31.6, "stoch_depth_survival": 0.80}
+      ],
+      "nlp_full_bert": [
+        {"name": "gMLPbase",   "L": 48,  "d_model": 512,  "d_ffn": 3072, "params_M": 130, "flops_B": 158.0},
+        {"name": "aMLPbase",   "L": 36,  "d_model": 512,  "d_ffn": 3072, "params_M": 109, "flops_B": 128.9, "attn_size": 64},
+        {"name": "gMLPlarge",  "L": 96,  "d_model": 768,  "d_ffn": 3072, "params_M": 365, "flops_B": 430.1},
+        {"name": "aMLPlarge",  "L": 72,  "d_model": 768,  "d_ffn": 3072, "params_M": 316, "flops_B": 370.3, "attn_size": 128},
+        {"name": "gMLPxlarge", "L": 144, "d_model": 1024, "d_ffn": 4096, "params_M": 941, "flops_B": 1091.3}
+      ]
+    },
+
+    "modules": [
+      {
+        "name": "gMLP_Block",
+        "type": "residual_block",
+        "description": "Core repeating unit. Input → LayerNorm → channel proj (expand) → GeLU → SGU → channel proj (contract) → residual add.",
+        "input_shape":  "[B, n, d_model]",
+        "output_shape": "[B, n, d_model]",
+        "confidence": 0.97,
+        "pseudocode": [
+          "shortcut = x",
+          "x = LayerNorm(x, axis=channel)",
+          "x = Linear(x, d_ffn, axis=channel)   # U projection: [B,n,d_model] -> [B,n,d_ffn]",
+          "x = GeLU(x)",
+          "x = SGU(x)                            # [B,n,d_ffn] -> [B,n,d_ffn/2] after split",
+          "x = Linear(x, d_model, axis=channel)  # V projection back to d_model",
+          "return x + shortcut"
+        ]
+      },
+      {
+        "name": "SGU",
+        "type": "spatial_gating_unit",
+        "description": "Splits the hidden dim in two halves. One half (v) undergoes spatial projection (cross-token mixing via W ∈ R^{n×n}), the other half (u) is the multiplicative gate. Output is element-wise product u * (W*v + b).",
+        "input_shape":  "[B, n, d_ffn]",
+        "output_shape": "[B, n, d_ffn/2]",
+        "confidence": 0.97,
+        "pseudocode": [
+          "u, v = split(x, axis=channel)          # each [B, n, d_ffn/2]",
+          "v = LayerNorm(v, axis=channel)",
+          "v = Linear(v, n, axis=spatial,          # W: [n,n], bias init=1, weight init≈0",
+          "            init_bias=1, init_weight≈0)",
+          "return u * v"
+        ],
+        "key_details": {
+          "W_shape": "[n, n]  (sequence_length × sequence_length)",
+          "W_init": "near-zero (paper uses small random values so W≈0 initially)",
+          "b_init": "ones (so fW,b(Z) ≈ 1 initially → SGU ≈ identity at start)",
+          "shared_across_channels": true,
+          "interaction_order": "2nd-order (zizj terms)",
+          "flop_count": "n^2 * e/2 multiply-adds where e = d_ffn"
+        }
+      },
+      {
+        "name": "Tiny_Attn",
+        "type": "single_head_attention",
+        "description": "Used only in aMLP variant. Single-head QKV attention with very small hidden size (64 or 128). Output is projected back to d_out = d_ffn/2 (the same shape as SGU output).",
+        "input_shape":  "[B, n, d_model]  (pre-expansion normalized input)",
+        "output_shape": "[B, n, d_ffn/2]",
+        "confidence": 0.95,
+        "pseudocode": [
+          "qkv = Linear(x, 3*d_attn, axis=channel)   # d_attn ∈ {64, 128}",
+          "q, k, v = split(qkv, 3, axis=channel)",
+          "w = einsum('bnd,bmd->bnm', q, k)          # [B,n,n] attention logits",
+          "a = softmax(w * rsqrt(d_attn))             # [B,n,n] attention weights",
+          "x = einsum('bnm,bmd->bnd', a, v)          # [B,n,d_attn]",
+          "return Linear(x, d_out, axis=channel)     # d_out = d_ffn/2"
+        ]
+      },
+      {
+        "name": "aMLP_SGU",
+        "type": "hybrid_spatial_gating_unit",
+        "description": "Modified SGU for aMLP: the gating branch v is replaced by sum of spatial projection (W*v) AND tiny attention output, then element-wise multiplied with u.",
+        "input_shape":  "[B, n, d_ffn]",
+        "output_shape": "[B, n, d_ffn/2]",
+        "confidence": 0.88,
+        "note": "Fig 6 shows tiny attention added to the gating side. Exact summation vs concatenation not fully specified; from pseudocode it appears as: gate = spatial_proj(v) + tiny_attn(x_normalized); return u * gate",
+        "ambiguity_ref": "ambiguity_001"
+      }
+    ],
+
+    "input_protocols": {
+      "NLP": {
+        "tokenizer": "SentencePiece, 32K vocab, cased",
+        "max_seq_len_pretrain": 512,
+        "max_seq_len_finetune": {"SST-2": 128, "MNLI": 128, "SQuAD": 512},
+        "cls_token": true,
+        "sep_token": true,
+        "positional_encoding": "none",
+        "padding_mask": "not needed — model ignores pads naturally"
+      },
+      "Vision": {
+        "patch_size": "16x16",
+        "input_resolution": 224,
+        "stem": "ViT/B16 patch embedding (convolutional)",
+        "positional_encoding": "none"
+      }
+    },
+
+    "toeplitz_constraint": {
+      "applied_in": "MLM pretraining only",
+      "description": "W is constrained to be a Toeplitz matrix (shift-invariant 1D convolution with full-sequence kernel) because gMLP learns Toeplitz-like W organically on MLM tasks. The constraint is quality-neutral but reduces redundant parameters.",
+      "confidence": 0.95
+    }
+  },
+
+  "mathematical_spec": {
+    "confidence": 0.93,
+    "equations": [
+      {
+        "id": "eq1",
+        "name": "gMLP_block_forward",
+        "latex": "Z = \\sigma(XU), \\quad \\tilde{Z} = s(Z), \\quad Y = \\tilde{Z}V",
+        "description": "Full block computation. X ∈ R^{n×d} is input. U ∈ R^{d×d_ffn} expands channels. σ = GeLU. s(·) is the spatial interaction layer (SGU). V ∈ R^{d_ffn/2 × d} contracts back. Shortcuts/norms omitted for brevity.",
+        "role": "forward pass",
+        "symbols": {"X": "[n, d] token representations", "U": "[d, d_ffn] expansion projection", "V": "[d_ffn/2, d] contraction projection", "σ": "GeLU activation", "s(·)": "spatial interaction layer (SGU)", "Z": "[n, d_ffn] expanded activations", "Ẑ": "[n, d_ffn/2] gated spatial output", "Y": "[n, d] block output (before residual)"},
+        "confidence": 0.97
+      },
+      {
+        "id": "eq2",
+        "name": "spatial_linear_projection",
+        "latex": "f_{W,b}(Z) = WZ + b",
+        "description": "Core spatial projection. W ∈ R^{n×n} operates on the sequence dimension. b ∈ R^{n×1} is token-specific bias. Unlike self-attention, W is input-independent (static).",
+        "role": "spatial mixing in SGU",
+        "symbols": {"W": "[n, n] learnable spatial weight matrix (static, input-independent)", "b": "[n] token-specific biases", "Z": "[n, e] input (e = d_ffn/2 for the v branch)"},
+        "confidence": 0.97
+      },
+      {
+        "id": "eq3",
+        "name": "simple_multiplicative_gate",
+        "latex": "s(Z) = Z \\odot f_{W,b}(Z)",
+        "description": "Baseline multiplicative gating (no channel split). Full Z is both gate and gated signal.",
+        "role": "ablation variant (Multiplicative gMLP)",
+        "confidence": 0.97
+      },
+      {
+        "id": "eq4",
+        "name": "split_multiplicative_gate_SGU",
+        "latex": "s(Z) = Z_1 \\odot f_{W,b}(Z_2), \\quad Z = Z_1 \\| Z_2",
+        "description": "Full SGU formula. Z is split channel-wise into two equal halves. Z1 acts as the multiplicative bypass gate; Z2 is spatially transformed and becomes the gating signal. This is the final SGU used in all reported results.",
+        "role": "spatial gating in all gMLP/aMLP experiments",
+        "symbols": {"Z1": "[B, n, d_ffn/2] bypass (gate input)", "Z2": "[B, n, d_ffn/2] spatial branch", "||": "concatenation along channel axis", "⊙": "element-wise (Hadamard) product"},
+        "confidence": 0.97
+      },
+      {
+        "id": "eq5",
+        "name": "W_initialization",
+        "latex": "W \\sim \\mathcal{N}(0, \\epsilon), \\quad b = \\mathbf{1}",
+        "description": "Critical for training stability. W initialized near-zero so f_{W,b}(Z) ≈ 1 at start → s(Z) ≈ Z (identity). Each gMLP block starts as a regular FFN.",
+        "role": "initialization",
+        "confidence": 0.88,
+        "note": "ε not numerically specified in paper; 'near-zero' is the description. Common practice: truncated normal with std=0.02 or smaller."
+      },
+      {
+        "id": "eq6",
+        "name": "toeplitz_W",
+        "latex": "W_{ij} = w_{i-j}, \\quad w \\in \\mathbb{R}^{2n-1}",
+        "description": "When Toeplitz constraint is applied (MLM experiments), W is parameterized by a single vector w of size 2n-1. The matrix element W_ij depends only on the relative position i-j. This implements a full-sequence 1D convolution shared across channels.",
+        "role": "spatial weight parameterization for MLM",
+        "confidence": 0.95
+      },
+      {
+        "id": "eq7",
+        "name": "tiny_attention_score",
+        "latex": "A = \\text{softmax}\\left(\\frac{QK^\\top}{\\sqrt{d_{attn}}}\\right), \\quad \\text{out} = AV",
+        "description": "Standard scaled dot-product attention with a single head. d_attn ∈ {64, 128}. Q, K, V are projected from the pre-block normalized input.",
+        "role": "aMLP auxiliary attention",
+        "confidence": 0.95
+      }
+    ]
+  },
+
+  "tensor_semantics": {
+    "confidence": 0.87,
+    "tensors": [
+      {"name": "X",    "shape": "[B, n, d_model]",  "dtype": "bfloat16 (assumed, TPU training)", "role": "input token representations to each block"},
+      {"name": "Z",    "shape": "[B, n, d_ffn]",    "dtype": "bfloat16", "role": "post-GeLU expanded activations"},
+      {"name": "Z1",   "shape": "[B, n, d_ffn/2]",  "dtype": "bfloat16", "role": "SGU bypass (gate input)"},
+      {"name": "Z2",   "shape": "[B, n, d_ffn/2]",  "dtype": "bfloat16", "role": "SGU spatial branch (input to W projection)"},
+      {"name": "W",    "shape": "[n, n]",            "dtype": "float32",  "role": "spatial weight matrix — shared across channels of Z2"},
+      {"name": "b",    "shape": "[n]",               "dtype": "float32",  "role": "token-specific bias for spatial projection, init=1"},
+      {"name": "Ẑ",   "shape": "[B, n, d_ffn/2]",   "dtype": "bfloat16", "role": "SGU output = Z1 ⊙ f_W,b(Z2)"},
+      {"name": "Y",    "shape": "[B, n, d_model]",   "dtype": "bfloat16", "role": "block output before residual add"},
+      {"name": "Q,K,V","shape": "[B, n, d_attn]",   "dtype": "bfloat16", "role": "query/key/value in tiny attention (aMLP only)"},
+      {"name": "w_toeplitz", "shape": "[2n-1]",      "dtype": "float32",  "role": "Toeplitz parameterization vector for W (MLM experiments)"},
+      {"name": "patch_embed","shape": "[B, (H/16)*(W/16), d_model]", "dtype": "bfloat16", "role": "ViT-style patch embeddings (vision input)"}
+    ],
+    "notation": {"B": "batch size", "n": "sequence length (tokens or patches)", "d_model": "model hidden dim", "d_ffn": "FFN hidden dim (expansion ≈ 4×–6× d_model)", "d_attn": "tiny attention dim (64 or 128)"}
+  },
+
+  "training_pipeline": {
+    "confidence": 0.92,
+    "shared_optimizer": {
+      "name": "AdamW",
+      "eps": 1e-6,
+      "beta1": 0.9,
+      "beta2": 0.999,
+      "weight_decay_nlp": 0.01,
+      "weight_decay_vision": 0.05,
+      "gradient_clipping_vision": 1.0,
+      "gradient_clipping_nlp": 0.0
+    },
+
+    "vision_pretraining": {
+      "task": "ImageNet-1K classification",
+      "epochs": 300,
+      "batch_size": 4096,
+      "peak_lr": 1e-3,
+      "lr_schedule": "cosine decay",
+      "warmup_steps": 10000,
+      "input_resolution": 224,
+      "augmentation": ["AutoAugment", "Mixup (α=0.8)", "CutMix (α=1.0)", "CutMix-Mixup switch prob=0.5"],
+      "label_smoothing": 0.1,
+      "stochastic_depth": {"Ti": 1.0, "S": 0.95, "B": 0.80},
+      "dropout": {"hidden": 0.0, "gelu": 0.0, "classification": 0.0},
+      "EMA_decay": 0.0,
+      "repeated_augmentation": false,
+      "random_erasing": false,
+      "hardware": "TPUv2 128 cores",
+      "runtime_per_run": "1-4 hours"
+    },
+
+    "nlp_pretraining": {
+      "task": "Masked Language Modeling (MLM, BERT-style)",
+      "dataset_ablation": "C4/RealNews subset",
+      "dataset_main": "C4/English (full)",
+      "max_seq_len_ablation": 128,
+      "max_seq_len_main": 512,
+      "batch_size_ablation": 2048,
+      "batch_size_main": 256,
+      "steps_ablation": 125000,
+      "steps_main": 1000000,
+      "peak_lr_ablation": 7e-4,
+      "peak_lr_main": 1e-4,
+      "warmup_steps": 10000,
+      "lr_schedule": "linear decay",
+      "vocabulary": "32K SentencePiece (cased)",
+      "positional_encoding": "none",
+      "hardware_ablation": "TPUv3 32 cores",
+      "hardware_main": "TPUv2 128 cores",
+      "runtime": "1-5 days depending on model size",
+      "masking_probability": 0.15,
+      "note_masking": "Standard BERT masking — not explicitly re-specified in this paper, assumed 15% uniform MLM"
+    },
+
+    "nlp_finetuning": {
+      "tasks": ["SST-2", "MNLI", "SQuAD v1.1", "SQuAD v2.0"],
+      "batch_size": {"SST-2_MNLI": [16, 32], "SQuAD": 32},
+      "peak_lr": {"SST-2_MNLI": [1e-5, 2e-5, 3e-5], "SQuAD": 5e-5},
+      "max_seq_len": {"SST-2_MNLI": 128, "SQuAD": 512},
+      "epochs_SST2": 5,
+      "steps_SQuAD": 8000,
+      "warmup": {"SST-2_MNLI": "10% of total steps", "SQuAD": 1000},
+      "lr_schedule": "linear decay",
+      "dropout": {"hidden": 0.1, "attention": 0.1, "gelu": 0.0},
+      "evaluation": "median of 5 independent runs"
+    }
+  },
+
+  "evaluation_protocol": {
+    "confidence": 0.96,
+    "vision": {
+      "dataset": "ImageNet-1K",
+      "metric": "Top-1 accuracy",
+      "split": "validation",
+      "input_resolution": 224,
+      "no_extra_data": true,
+      "std_across_runs": "~0.1%",
+      "baselines": ["ViT-B/16", "ViT-L/16", "DeiT-Ti/S/B", "MLP-Mixer-B/16", "ResMLP-12/24/36", "ResNet-152", "EfficientNet-B0/B3/B7", "NFNet-F0"]
+    },
+    "nlp": {
+      "datasets": ["GLUE/SST-2", "GLUE/MNLI-m/mm", "SQuAD v1.1", "SQuAD v2.0"],
+      "metrics": {"SST-2": "accuracy", "MNLI": "accuracy (m/mm)", "SQuAD": "F1"},
+      "pretrain_metric": "validation perplexity (MLM)",
+      "std_pretrain": "~0.01 perplexity",
+      "baselines": ["BERTbase (Devlin 2018)", "BERTlarge (Devlin 2018)", "BERTbase+rel_pos (T5-style)", "MLP-Mixer (on MLM)", "Random Synthesizer"]
+    },
+    "primary_results_table_nlp": {
+      "note": "From Table 6 — full BERT setup",
+      "models": [
+        {"name": "BERTbase (ours)", "ppl": 4.17, "SST2": 93.8, "MNLI_m": 85.6, "MNLI_mm": 85.7, "SQuAD1": 90.2, "SQuAD2": 78.6, "attn_size": "768 (12h×64)", "params_M": 110},
+        {"name": "gMLPbase",       "ppl": 4.28, "SST2": 94.2, "MNLI_m": 83.7, "MNLI_mm": 84.1, "SQuAD1": 86.7, "SQuAD2": 70.1, "attn_size": "none",         "params_M": 130},
+        {"name": "aMLPbase",       "ppl": 3.95, "SST2": 93.4, "MNLI_m": 85.9, "MNLI_mm": 85.8, "SQuAD1": 90.7, "SQuAD2": 80.9, "attn_size": 64,             "params_M": 109},
+        {"name": "BERTlarge (ours)","ppl": 3.35, "SST2": 94.3, "MNLI_m": 87.0, "MNLI_mm": 87.4, "SQuAD1": 92.0, "SQuAD2": 81.0, "attn_size": "1024 (16h×64)","params_M": 336},
+        {"name": "gMLPlarge",      "ppl": 3.32, "SST2": 94.8, "MNLI_m": 86.2, "MNLI_mm": 86.5, "SQuAD1": 89.5, "SQuAD2": 78.3, "attn_size": "none",         "params_M": 365},
+        {"name": "aMLPlarge",      "ppl": 3.19, "SST2": 94.8, "MNLI_m": 88.4, "MNLI_mm": 88.4, "SQuAD1": 92.2, "SQuAD2": 85.4, "attn_size": 128,            "params_M": 316},
+        {"name": "gMLPxlarge",     "ppl": 2.89, "SST2": 95.6, "MNLI_m": 87.7, "MNLI_mm": 87.7, "SQuAD1": 90.9, "SQuAD2": 82.1, "attn_size": "none",         "params_M": 941}
+      ]
+    },
+    "primary_results_table_vision": {
+      "note": "From Table 2 — ImageNet-1K without extra data",
+      "models": [
+        {"name": "DeiT-Ti", "top1": 72.2, "params_M": 5,  "MAdds_B": 1.3},
+        {"name": "DeiT-S",  "top1": 79.8, "params_M": 22, "MAdds_B": 4.6},
+        {"name": "DeiT-B",  "top1": 81.8, "params_M": 86, "MAdds_B": 17.5},
+        {"name": "gMLP-Ti", "top1": 72.3, "params_M": 6,  "MAdds_B": 1.4},
+        {"name": "gMLP-S",  "top1": 79.6, "params_M": 20, "MAdds_B": 4.5},
+        {"name": "gMLP-B",  "top1": 81.6, "params_M": 73, "MAdds_B": 15.8},
+        {"name": "Mixer-B/16","top1": 76.4,"params_M": 59, "MAdds_B": 12.7},
+        {"name": "ResMLP-36","top1": 79.7, "params_M": 45, "MAdds_B": 8.9}
+      ]
+    }
+  },
+
+  "implementation_assumptions": [
+    {
+      "id": "assume_001",
+      "assumption": "Framework: PyTorch (not TF/JAX). Paper uses TF/TPU; we implement in PyTorch for GPU reproducibility.",
+      "basis": "Common practice for open-source reproductions",
+      "confidence": 0.85,
+      "alternatives": ["JAX/Flax", "TensorFlow 2"]
+    },
+    {
+      "id": "assume_002",
+      "assumption": "W initialization: truncated normal with std=0.02 (standard Transformer init) but scaled by 0.1 to approximate near-zero. Bias init=1 for spatial projection.",
+      "basis": "Paper says 'near-zero'; literature default is truncated_normal(std=0.02); scaling by ≤0.1 achieves near-zero behavior.",
+      "confidence": 0.72,
+      "alternatives": ["std=0.001 directly", "zeros + noise during first few steps"]
+    },
+    {
+      "id": "assume_003",
+      "assumption": "MLM masking: 15% of tokens masked, 80% [MASK] / 10% random / 10% original (standard BERT).",
+      "basis": "BERT protocol referenced; not re-specified in this paper.",
+      "confidence": 0.90,
+      "alternatives": ["SpanBERT-style span masking", "Whole-word masking"]
+    },
+    {
+      "id": "assume_004",
+      "assumption": "Toeplitz matrix implementation in PyTorch via circulant trick or explicit parameterization via torch.Tensor of size 2n-1 with index masking.",
+      "basis": "Paper provides TF pseudocode (Appendix C); PyTorch equivalent uses similar padding+reshape.",
+      "confidence": 0.80,
+      "alternatives": ["Sparse matrix", "Explicit [n,n] matrix with weight-tying via scatter"]
+    },
+    {
+      "id": "assume_005",
+      "assumption": "Vision stem: standard ViT patch embedding (Conv2d with kernel=16, stride=16 → flatten → linear projection to d_model).",
+      "basis": "Paper states 'input and output protocols follow ViT/B16'.",
+      "confidence": 0.93,
+      "alternatives": ["learned patch tokenizer with overlapping patches"]
+    },
+    {
+      "id": "assume_006",
+      "assumption": "LayerNorm used throughout (both channel-wise in block and inside SGU on the Z2 branch before spatial proj). Pre-norm architecture.",
+      "basis": "Figure 1 pseudocode shows norm before every major op; consistent with modern BERT/ViT pre-norm style.",
+      "confidence": 0.92,
+      "alternatives": ["Post-norm (original BERT)", "RMSNorm"]
+    },
+    {
+      "id": "assume_007",
+      "assumption": "aMLP combining mechanism: gate = W*Z2 + tiny_attn(X_pre); i.e., spatial proj output and tiny attention output are additively combined before multiplying with Z1.",
+      "basis": "Figure 6 shows addition symbol in diagram; pseudocode implies both contribute to gating signal.",
+      "confidence": 0.75,
+      "alternatives": ["Concatenation then linear", "Learned weighted sum"]
+    },
+    {
+      "id": "assume_008",
+      "assumption": "Stochastic depth implementation: drop entire block residual with probability (1-survival_prob) during training, scaled at inference. Applied only in vision models.",
+      "basis": "Standard stochastic depth (Huang et al. 2016). Applied in vision; no mention of it in NLP.",
+      "confidence": 0.88,
+      "alternatives": ["DropPath per token", "Dropout on residual"]
+    }
+  ],
+
+  "ambiguities": [
+    {
+      "id": "ambiguity_001",
+      "location": "Section 4.3, Figure 6",
+      "description": "aMLP: how exactly is tiny_attn combined with the SGU gating branch? Diagram shows '+' operator but text says 'attached to the gating function'. Whether the input to tiny_attn is the normalized pre-block input X or Z2 post-split is not definitively clear.",
+      "primary_assumption": "tiny_attn takes the pre-block LayerNorm output (normalized X before channel expansion); its output is added to f_{W,b}(Z2) before the Z1 ⊙ gate multiply.",
+      "alternatives": ["tiny_attn takes Z2 directly", "tiny_attn output replaces f_{W,b}(Z2) rather than adding to it"],
+      "confidence": 0.75
+    },
+    {
+      "id": "ambiguity_002",
+      "location": "Section 2.1",
+      "description": "Near-zero W initialization: exact std value not provided.",
+      "primary_assumption": "std = 0.002 (10× smaller than usual 0.02)",
+      "alternatives": ["std = 0.001", "std = 0.005", "torch.zeros then small noise"],
+      "confidence": 0.65
+    },
+    {
+      "id": "ambiguity_003",
+      "location": "Section 3",
+      "description": "Whether CLS token is used in vision classification or global average pooling.",
+      "primary_assumption": "Global average pooling (consistent with ViT/B16 when no positional encoding is used; also simpler for no-positional-encoding models).",
+      "alternatives": ["CLS token (ViT default)"],
+      "confidence": 0.70
+    }
+  ],
+
+  "confidence_annotations": {
+    "architecture": 0.95,
+    "mathematical_spec": 0.93,
+    "tensor_semantics": 0.87,
+    "training_pipeline": 0.92,
+    "evaluation_protocol": 0.96,
+    "implementation_assumptions": 0.80,
+    "overall_sir_confidence": 0.91
+  }
+}
