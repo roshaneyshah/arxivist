@@ -1,6 +1,6 @@
 {
   "index_version": 1,
-  "total_papers": 2,
+  "total_papers": 4,
   "papers": [
     {
       "paper_id": "arxiv_2605_06564",
@@ -25,6 +25,28 @@
       "has_comparison": false,
       "pipeline_complete": false,
       "last_updated": "2026-05-24T12:20:00Z"
+    },
+    {
+      "paper_id": "arxiv_2306_015006",
+      "title": "DNABERT-2: Efficient Foundation Model and Benchmark For Multi-Species Genomes",
+      "domain": "Multimodal",
+      "sir_version": 1,
+      "sir_confidence": 0.87,
+      "has_repo": true,
+      "has_notebook": true,
+      "has_comparison": true,
+      "last_updated": "2026-07-16T00:00:00Z"
+    },
+    {
+      "paper_id": "arxiv_2306_015794",
+      "title": "HyenaDNA: Long-Range Genomic Sequence Modeling at Single Nucleotide Resolution",
+      "domain": "Multimodal",
+      "sir_version": 1,
+      "sir_confidence": 0.78,
+      "has_repo": true,
+      "has_notebook": true,
+      "has_comparison": true,
+      "last_updated": "2026-07-11T00:00:00Z"
     }
   ]
 }
