@@ -1,6 +1,6 @@
 {
   "index_version": 1,
-  "total_papers": 2,
+  "total_papers": 3,
   "papers": [
     {
       "paper_id": "arxiv_2511_19942",
@@ -19,13 +19,24 @@
       "title": "Dynamic Treatment on Networks",
       "domain": "RL / Causal Inference / Network Science",
       "sir_version": 1,
-      "sir_confidence": 0.83,
+      "sir_confidence": 0.78,
       "has_repo": true,
       "has_notebook": true,
       "has_comparison": true,
       "pipeline_complete": true,
       "last_updated": "2026-05-09T00:00:00Z"
+    },
+    {
+      "paper_id": "arxiv_2606_11859",
+      "title": "Scenario Generation for Time Series and Curves: A Comparison of Nonparametric and Semiparametric Bootstrap",
+      "domain": "Other",
+      "sir_version": 1,
+      "sir_confidence": 0.78,
+      "has_repo": true,
+      "has_notebook": true,
+      "has_comparison": true,
+      "pipeline_complete": true,
+      "last_updated": "2026-07-16T00:10:00Z"
     }
-   
   ]
 }
