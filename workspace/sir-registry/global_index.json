@@ -1,18 +1,58 @@
-{
+﻿{
+  "index_version": 1,
+  "total_papers": 5,
   "papers": [
+    {
+      "paper_id": "arxiv_2605_06564",
+      "title": "Dynamic Treatment on Networks",
+      "domain": "RL / Causal Inference / Network Science",
+      "sir_version": 1,
+      "sir_confidence": 0.83,
+      "has_repo": true,
+      "has_notebook": true,
+      "has_comparison": true,
+      "pipeline_complete": true,
+      "last_updated": "2026-05-09T00:00:00Z"
+    },
+    {
+      "paper_id": "arxiv_2605_17307",
+      "title": "Deep Reinforcement Learning Framework for Diversified Portfolio Management Across Global Equity Markets",
+      "domain": "RL / Quantitative Finance / Portfolio Management",
+      "sir_version": 1,
+      "sir_confidence": 0.88,
+      "has_repo": true,
+      "has_notebook": true,
+      "has_comparison": false,
+      "pipeline_complete": false,
+      "last_updated": "2026-05-24T12:20:00Z"
+    },
+    {
+      "paper_id": "arxiv_1406_2661",
+      "title": "Generative Adversarial Nets",
+      "sir_version": 1,
+      "sir_confidence": 0.65,
+      "pipeline_complete": true
+    },
+    {
+      "paper_id": "arxiv_1502_03167",
+      "title": "Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift",
+      "sir_version": 1,
+      "sir_confidence": 0.91,
+      "pipeline_complete": true
+    },
     {
       "paper_id": "arxiv_1412_6980",
       "title": "Adam: A Method for Stochastic Optimization",
-      "arxiv_id": "1412.6980",
       "sir_version": 1,
-      "overall_confidence": 0.96
+      "sir_confidence": 0.96,
+      "pipeline_complete": true
     },
     {
       "paper_id": "arxiv_1505_04597",
       "title": "U-Net: Convolutional Networks for Biomedical Image Segmentation",
-      "arxiv_id": "1505.04597",
       "sir_version": 1,
-      "overall_confidence": 0.93
+      "sir_confidence": 0.93,
+      "pipeline_complete": true
     }
   ]
 }
