@@ -1,5 +1,5 @@
 {
-  "paper_id": "arxiv_1412_6980",
+  "paper_id": "arxiv_1505_04597",
   "sir_version": 1,
   "last_completed_stage": 5,
   "stages": {
@@ -10,6 +10,6 @@
     "stage5_notebook": "complete",
     "stage6_compare": "pending"
   },
-  "overall_confidence": 0.96,
+  "overall_confidence": 0.93,
   "human_review_required": false
 }
