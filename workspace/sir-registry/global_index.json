@@ -1,18 +1,18 @@
 {
-  "index_version": 1,
-  "total_papers": 1,
   "papers": [
     {
-      "paper_id": "arxiv_1502_03167",
-      "title": "Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift",
-      "domain": "CV",
+      "paper_id": "arxiv_1412_6980",
+      "title": "Adam: A Method for Stochastic Optimization",
+      "arxiv_id": "1412.6980",
       "sir_version": 1,
-      "sir_confidence": 0.91,
-      "has_repo": true,
-      "has_notebook": true,
-      "has_comparison": false,
-      "pipeline_complete": false,
-      "last_updated": "2026-07-10T02:00:00Z"
+      "overall_confidence": 0.96
+    },
+    {
+      "paper_id": "arxiv_1505_04597",
+      "title": "U-Net: Convolutional Networks for Biomedical Image Segmentation",
+      "arxiv_id": "1505.04597",
+      "sir_version": 1,
+      "overall_confidence": 0.93
     }
   ]
 }
